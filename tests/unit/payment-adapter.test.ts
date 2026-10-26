@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PayPalSandboxAdapter } from '../../src/payment/paypal-sandbox-adapter';
 import { PaymentExecutionNotEnabledError } from '../../src/common/errors';
 import { PaymentOrderRequest } from '../../src/common/types';
+import { IPayPalClient } from '../../src/payment/types';
 
 describe('PayPal Sandbox Adapter Module', () => {
   const originalFetch = globalThis.fetch;
@@ -43,12 +44,10 @@ describe('PayPal Sandbox Adapter Module', () => {
   });
 
   it('strictly enforces guarded execution in foundation phase (does NOT return fake success)', async () => {
-    // Constraint: "Do not pretend PayPal integration is implemented."
-    // Constraint: "Do not add a fake successful payment response."
     const guardedAdapter = new PayPalSandboxAdapter(
       {
-        clientId: 'sandbox_client_id_placeholder',
-        clientSecret: 'sandbox_client_secret_placeholder',
+        clientId: 'AbCdEf1234567890',
+        clientSecret: 'ZyXwVu0987654321',
         environment: 'sandbox',
         apiBaseUrl: 'https://api-m.sandbox.paypal.com',
       },
@@ -91,115 +90,155 @@ describe('PayPal Sandbox Adapter Module', () => {
       expect(isValid).toBe(false);
     });
 
-    it('returns true when OAuth token response is ok', async () => {
-      globalThis.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-      } as Response);
+    it('returns true when client obtains access token successfully', async () => {
+      const mockClient: IPayPalClient = {
+        isConfigured: () => true,
+        getAccessToken: vi.fn().mockResolvedValue('token-verified'),
+        createOrder: vi.fn(),
+        getOrder: vi.fn(),
+        captureOrder: vi.fn(),
+        reconcileOrder: vi.fn(),
+      };
 
-      const adapter = new PayPalSandboxAdapter({
-        clientId: 'real_client_id_123',
-        clientSecret: 'real_client_secret_456',
-        environment: 'sandbox',
-        apiBaseUrl: 'https://api-m.sandbox.paypal.com',
-      });
-
+      const adapter = new PayPalSandboxAdapter(mockClient, true);
       const isValid = await adapter.verifyCredentials();
       expect(isValid).toBe(true);
     });
 
-    it('returns false when OAuth token endpoint fails or throws', async () => {
-      globalThis.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
+    it('returns false when client throws authentication error', async () => {
+      const mockClient: IPayPalClient = {
+        isConfigured: () => true,
+        getAccessToken: vi.fn().mockRejectedValue(new Error('Auth failed')),
+        createOrder: vi.fn(),
+        getOrder: vi.fn(),
+        captureOrder: vi.fn(),
+        reconcileOrder: vi.fn(),
+      };
 
-      const adapter = new PayPalSandboxAdapter({
-        clientId: 'real_client_id_123',
-        clientSecret: 'real_client_secret_456',
-        environment: 'sandbox',
-        apiBaseUrl: 'https://api-m.sandbox.paypal.com',
-      });
-
+      const adapter = new PayPalSandboxAdapter(mockClient, true);
       const isValid = await adapter.verifyCredentials();
       expect(isValid).toBe(false);
     });
   });
 
-  describe('executePayment with live execution enabled and configured credentials', () => {
-    const liveConfig = {
-      clientId: 'valid_client_id_abc',
-      clientSecret: 'valid_client_secret_xyz',
-      environment: 'sandbox' as const,
-      apiBaseUrl: 'https://api-m.sandbox.paypal.com',
-    };
+  describe('executePayment with mockable client', () => {
+    it('creates sandbox order when no preApprovedOrderId is provided and live execution is enabled', async () => {
+      const mockClient: IPayPalClient = {
+        isConfigured: () => true,
+        getAccessToken: vi.fn().mockResolvedValue('mock-token'),
+        createOrder: vi.fn().mockResolvedValue({
+          id: 'SANDBOX-ORDER-NEW-1',
+          status: 'CREATED',
+          intent: 'CAPTURE',
+          purchase_units: [],
+          links: [
+            { href: 'https://www.sandbox.paypal.com/checkoutnow?token=SANDBOX-ORDER-NEW-1', rel: 'approve', method: 'GET' },
+          ],
+        }),
+        getOrder: vi.fn(),
+        captureOrder: vi.fn(),
+        reconcileOrder: vi.fn(),
+      };
 
-    it('successfully creates order when PayPal API succeeds', async () => {
-      const mockFetch = vi
-        .fn()
-        // 1st call: OAuth token
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ access_token: 'test_token_123' }),
-        } as Response)
-        // 2nd call: Create order
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ id: 'ORDER-999-ABC', status: 'CREATED' }),
-        } as Response);
-
-      globalThis.fetch = mockFetch;
-
-      const adapter = new PayPalSandboxAdapter(liveConfig, true);
+      const adapter = new PayPalSandboxAdapter(mockClient, true);
       const result = await adapter.executePayment(sampleRequest, 'req-live-1');
 
       expect(result.executed).toBe(true);
-      expect(result.status).toBe('PAYPAL_API_PENDING');
-      expect(result.paypalOrderId).toBe('ORDER-999-ABC');
-      expect(result.message).toContain('ORDER-999-ABC');
+      expect(result.status).toBe('PAYPAL_ORDER_CREATED');
+      expect(result.paypalOrderId).toBe('SANDBOX-ORDER-NEW-1');
+      expect(result.approvalUrl).toContain('SANDBOX-ORDER-NEW-1');
     });
 
-    it('handles OAuth token failure gracefully', async () => {
-      globalThis.fetch = vi.fn().mockResolvedValueOnce({
-        ok: false,
-        status: 401,
-        text: async () => 'Invalid client credentials',
-      } as Response);
+    it('reconciles and captures pre-approved order when preApprovedOrderId is provided', async () => {
+      const mockClient: IPayPalClient = {
+        isConfigured: () => true,
+        getAccessToken: vi.fn().mockResolvedValue('mock-token'),
+        createOrder: vi.fn(),
+        getOrder: vi.fn(),
+        reconcileOrder: vi.fn().mockResolvedValue({
+          isReconciled: true,
+          orderId: 'PRE-APPROVED-ORDER-77',
+          status: 'APPROVED',
+          amount: 20.0,
+          currency: 'USD',
+          discrepancies: [],
+          reconciledAt: new Date().toISOString(),
+        }),
+        captureOrder: vi.fn().mockResolvedValue({
+          id: 'PRE-APPROVED-ORDER-77',
+          status: 'COMPLETED',
+          purchase_units: [
+            {
+              payments: {
+                captures: [
+                  {
+                    id: 'CAPTURE-77-XYZ',
+                    status: 'COMPLETED',
+                    amount: { currency_code: 'USD', value: '20.00' },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      };
 
-      const adapter = new PayPalSandboxAdapter(liveConfig, true);
-      const result = await adapter.executePayment(sampleRequest, 'req-live-2');
+      const adapter = new PayPalSandboxAdapter(mockClient, true);
+      const result = await adapter.executePayment(sampleRequest, 'req-cap-1', 'PRE-APPROVED-ORDER-77');
+
+      expect(result.executed).toBe(true);
+      expect(result.status).toBe('COMPLETED');
+      expect(result.paypalOrderId).toBe('PRE-APPROVED-ORDER-77');
+      expect(result.paypalCaptureId).toBe('CAPTURE-77-XYZ');
+    });
+
+    it('handles reconciliation failure before capture safely', async () => {
+      const mockClient: IPayPalClient = {
+        isConfigured: () => true,
+        getAccessToken: vi.fn().mockResolvedValue('mock-token'),
+        createOrder: vi.fn(),
+        getOrder: vi.fn(),
+        reconcileOrder: vi.fn().mockResolvedValue({
+          isReconciled: false,
+          orderId: 'ORDER-TAMPERED',
+          status: 'APPROVED',
+          amount: 200.0, // Expected 20
+          currency: 'USD',
+          discrepancies: ['Amount mismatch: expected 20, found 200'],
+          reconciledAt: new Date().toISOString(),
+        }),
+        captureOrder: vi.fn(),
+      };
+
+      const adapter = new PayPalSandboxAdapter(mockClient, true);
+      const result = await adapter.executePayment(sampleRequest, 'req-tamper', 'ORDER-TAMPERED');
 
       expect(result.executed).toBe(false);
       expect(result.status).toBe('FAILED');
-      expect(result.message).toContain('OAuth authorization failed');
-      expect(result.error).toContain('Invalid client credentials');
+      expect(result.error).toContain('Amount mismatch');
+      expect(mockClient.captureOrder).not.toHaveBeenCalled();
     });
 
-    it('handles order creation failure from PayPal API gracefully', async () => {
-      globalThis.fetch = vi
-        .fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ access_token: 'test_token_123' }),
-        } as Response)
-        .mockResolvedValueOnce({
-          ok: false,
-          json: async () => ({ message: 'Currency not supported for merchant' }),
-        } as Response);
+    it('delegates createOrder, getOrderDetails, and reconcileOrder directly', async () => {
+      const mockClient: IPayPalClient = {
+        isConfigured: () => true,
+        getAccessToken: vi.fn().mockResolvedValue('mock-token'),
+        createOrder: vi.fn().mockResolvedValue({ id: 'O-1', status: 'CREATED', intent: 'CAPTURE', purchase_units: [], links: [] }),
+        getOrder: vi.fn().mockResolvedValue({ id: 'O-1', status: 'APPROVED', intent: 'CAPTURE', purchase_units: [], links: [] }),
+        reconcileOrder: vi.fn().mockResolvedValue({ isReconciled: true, orderId: 'O-1', status: 'APPROVED', amount: 20, currency: 'USD', discrepancies: [], reconciledAt: '' }),
+        captureOrder: vi.fn(),
+      };
 
-      const adapter = new PayPalSandboxAdapter(liveConfig, true);
-      const result = await adapter.executePayment(sampleRequest, 'req-live-3');
+      const adapter = new PayPalSandboxAdapter(mockClient, true);
 
-      expect(result.executed).toBe(false);
-      expect(result.status).toBe('FAILED');
-      expect(result.message).toContain('Currency not supported for merchant');
-    });
+      const created = await adapter.createOrder(sampleRequest, 'req-del-1');
+      expect(created.id).toBe('O-1');
 
-    it('handles network failure gracefully', async () => {
-      globalThis.fetch = vi.fn().mockRejectedValue(new Error('Connection timed out'));
+      const details = await adapter.getOrderDetails('O-1');
+      expect(details.status).toBe('APPROVED');
 
-      const adapter = new PayPalSandboxAdapter(liveConfig, true);
-      const result = await adapter.executePayment(sampleRequest, 'req-live-4');
-
-      expect(result.executed).toBe(false);
-      expect(result.status).toBe('FAILED');
-      expect(result.message).toContain('PayPal Sandbox network connection failed');
+      const rec = await adapter.reconcileOrder('O-1');
+      expect(rec.isReconciled).toBe(true);
     });
   });
 });

@@ -23,8 +23,12 @@ const envSchema = z.object({
   // PayPal Sandbox Adapter
   PAYPAL_CLIENT_ID: z.string().default('sandbox_client_id_placeholder'),
   PAYPAL_CLIENT_SECRET: z.string().default('sandbox_client_secret_placeholder'),
-  PAYPAL_ENVIRONMENT: z.enum(['sandbox', 'live']).default('sandbox'),
+  PAYPAL_ENVIRONMENT: z.literal('sandbox').default('sandbox'),
   PAYPAL_API_BASE_URL: z.string().url().default('https://api-m.sandbox.paypal.com'),
+  PAYPAL_ALLOW_LIVE_EXECUTION: z
+    .preprocess((val) => val === 'true' || val === true, z.boolean())
+    .default(false),
+  PAYPAL_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
 
   // Policy Engine Defaults
   POLICY_MAX_TRANSACTION_AMOUNT: z.coerce.number().positive().default(50.0),
@@ -85,6 +89,8 @@ export function getSanitizedConfig(config: EnvConfig): Record<string, unknown> {
     PAYPAL_CLIENT_SECRET: maskSecret(config.PAYPAL_CLIENT_SECRET),
     PAYPAL_ENVIRONMENT: config.PAYPAL_ENVIRONMENT,
     PAYPAL_API_BASE_URL: config.PAYPAL_API_BASE_URL,
+    PAYPAL_ALLOW_LIVE_EXECUTION: config.PAYPAL_ALLOW_LIVE_EXECUTION,
+    PAYPAL_TIMEOUT_MS: config.PAYPAL_TIMEOUT_MS,
     POLICY_MAX_TRANSACTION_AMOUNT: config.POLICY_MAX_TRANSACTION_AMOUNT,
     POLICY_MAX_DAILY_AMOUNT: config.POLICY_MAX_DAILY_AMOUNT,
     POLICY_ALLOWED_CURRENCIES: config.POLICY_ALLOWED_CURRENCIES,

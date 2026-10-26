@@ -64,8 +64,9 @@ export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
         clientSecret: config.PAYPAL_CLIENT_SECRET,
         environment: config.PAYPAL_ENVIRONMENT,
         apiBaseUrl: config.PAYPAL_API_BASE_URL,
+        timeoutMs: config.PAYPAL_TIMEOUT_MS,
       },
-      false // Foundation phase: live execution is strictly guarded
+      config.PAYPAL_ALLOW_LIVE_EXECUTION
     );
 
   // Centralized Error Handler

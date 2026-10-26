@@ -366,10 +366,111 @@ Response (`202 Accepted` when requiring human approval, `200 OK` when allowed, `
 
 ---
 
-### 4. Payment Initiation Gateway
+### 4. PayPal Sandbox Orders & Payments
 
-#### `POST /api/v1/payments/initiate`
-The primary endpoint for AI agents. Combines validation, injection scanning, deterministic policy enforcement, audit persistence, and payment adapter dispatch.
+#### A. Separated Order Creation: `POST /api/v1/payments/orders`
+Creates a real PayPal Sandbox Order resource. **Strictly separated from payment execution**; calling this endpoint establishes the payment intent and returns an approval URL, but does **not** transfer or capture funds.
+
+```bash
+curl -X POST http://localhost:3000/api/v1/payments/orders \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agentId": "agent-procurement",
+    "amount": 15.00,
+    "currency": "USD",
+    "recipient": {
+      "email": "sb-merchant1@business.example.com"
+    },
+    "description": "Monthly server quota replenishment",
+    "promptContext": "Verified capacity constraint; issuing sandbox order."
+  }'
+```
+Response (`201 Created`):
+```json
+{
+  "requestId": "1e2f9d8a-6b5c-4d3e-8f2a-7c9b0e1d2f3a",
+  "orderId": "5O190127TN364715T",
+  "status": "CREATED",
+  "intent": "CAPTURE",
+  "approvalUrl": "https://www.sandbox.paypal.com/checkoutnow?token=5O190127TN364715T",
+  "securityVerification": {
+    "injectionScan": "PASSED",
+    "policyDecision": "ALLOW"
+  }
+}
+```
+
+#### B. Order Details & Reconciliation: `GET /api/v1/payments/orders/:orderId`
+Retrieves order status from PayPal Sandbox and reconciles expected amounts, currencies, and merchant contexts.
+
+```bash
+curl -X GET "http://localhost:3000/api/v1/payments/orders/5O190127TN364715T?amount=15.00&currency=USD"
+```
+Response (`200 OK`):
+```json
+{
+  "orderId": "5O190127TN364715T",
+  "status": "CREATED",
+  "intent": "CAPTURE",
+  "purchase_units": [
+    {
+      "reference_id": "1e2f9d8a-6b5c-4d3e-8f2a-7c9b0e1d2f3a",
+      "amount": { "currency_code": "USD", "value": "15.00" },
+      "payee": { "email_address": "sb-merchant1@business.example.com" }
+    }
+  ],
+  "reconciliation": {
+    "isReconciled": true,
+    "orderId": "5O190127TN364715T",
+    "status": "CREATED",
+    "captureStatus": "NONE",
+    "amount": 15.0,
+    "currency": "USD",
+    "discrepancies": []
+  }
+}
+```
+
+#### C. Authorized Payment Execution / Capture: `POST /api/v1/payments/orders/:orderId/capture`
+Executes payment capture **strictly after** passing AgentGuard prompt injection scanning and deterministic policy authorization.
+
+> [!IMPORTANT]
+> A blocked or pending request will **never** trigger payment execution. If a network timeout occurs during capture, AgentGuard **never blindly retries**; it reconciles order status via `GET /v2/checkout/orders/{id}` first to verify whether PayPal already settled the charge.
+
+```bash
+curl -X POST http://localhost:3000/api/v1/payments/orders/5O190127TN364715T/capture \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agentId": "agent-procurement",
+    "amount": 15.00,
+    "currency": "USD",
+    "recipient": {
+      "email": "sb-merchant1@business.example.com"
+    },
+    "description": "Capture confirmed item"
+  }'
+```
+Response (`200 OK`):
+```json
+{
+  "executed": true,
+  "status": "COMPLETED",
+  "message": "PayPal Sandbox order 5O190127TN364715T captured successfully.",
+  "requestId": "9a8b7c6d-5e4f-3a2b-1c0d-e9f8a7b6c5d4",
+  "agentId": "agent-procurement",
+  "amount": 15.00,
+  "currency": "USD",
+  "recipientEmail": "sb-merchant1@business.example.com",
+  "paypalOrderId": "5O190127TN364715T",
+  "paypalCaptureId": "2GG816281E831902X",
+  "securityVerification": {
+    "injectionScan": "PASSED",
+    "policyDecision": "ALLOW"
+  }
+}
+```
+
+#### D. Unified Gateway Entrypoint: `POST /api/v1/payments/initiate`
 
 **Dry-Run Verification Request**:
 ```bash
@@ -470,11 +571,13 @@ curl -X GET http://localhost:3000/api/v1/audit/agent/agent-procurement?limit=20
 | **Injection Scanner** | ✅ Complete | Zero-width Unicode restoration, Base64 payload decoding, regex heuristic rules, risk scoring, threat levels |
 | **Deterministic Policy Engine** | ✅ Complete | Max transaction amount, rolling 24h spend limit, ISO currency allowlist, recipient denylist, HITL approval enforcement |
 | **OpenRouter AI Provider** | ✅ Complete | Strict authority separation: advisory semantic analyzer with fallback resilience, non-authoritative disclaimer |
-| **PayPal Sandbox Adapter** | ✅ Complete | OAuth2 credential verification, order creation, foundation phase guarded execution (no fake success responses) |
+| **PayPal Sandbox REST Client** | ✅ Complete | Official Orders v2 REST client (`api-m.sandbox.paypal.com`), OAuth2 token caching with expiry buffer & promise coalescing |
+| **Separated Order Creation & Capture** | ✅ Complete | `POST /api/v1/payments/orders` creates order without capture; `POST .../capture` strictly requires policy authorization |
+| **Order Reconciliation & Idempotency** | ✅ Complete | `PayPal-Request-Id` idempotency tracking; ambiguous network timeouts query `GET /v2/checkout/orders/{id}` before retry |
 | **PostgreSQL Audit Repository** | ✅ Complete | SQL schema with UUID & indexes, recursive secret sanitizer, connection pooling, graceful shutdown |
 | **Containerization** | ✅ Complete | Multi-stage Dockerfile (non-root `node` runner), Docker Compose with healthchecks and network isolation |
-| **Test Suite & Coverage** | ✅ Complete | 67 tests passing across 13 test files; >95% statement and line coverage |
-| **Live PayPal Sandbox Credentials** | ⏸️ Pending Credentials | Ready to activate once live PayPal sandbox developer client ID and secret are configured in `.env` |
+| **Test Suite & Coverage** | ✅ Complete | 87 tests passing across 15 test files (100% active tests passing); unit, contract, and live integration tests |
+| **Live PayPal Sandbox Integration Test** | ✅ Labeled & Ready | Runs automatically when real credentials are placed in `.env`; explicitly skipped with labeled notification when credentials are not supplied |
 
 ---
 

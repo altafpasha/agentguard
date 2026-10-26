@@ -3,7 +3,11 @@ import { InjectionScanner } from '../scanner';
 import { PolicyEngine } from '../policy';
 import { IPayPalSandboxAdapter } from '../payment';
 import { IAuditRepository } from '../audit';
-import { paymentInitiateRequestSchema } from './schemas';
+import {
+  paymentInitiateRequestSchema,
+  createOrderRequestSchema,
+  captureOrderRequestSchema,
+} from './schemas';
 import {
   ValidationError,
   InjectionDetectedError,
@@ -24,6 +28,293 @@ export const paymentRoutes: FastifyPluginAsync<PaymentRouteOptions> = async (
 ) => {
   const { scanner, policyEngine, paymentAdapter, auditRepo } = options;
 
+  /**
+   * 1. Create Sandbox Order (Separated from payment execution)
+   * Prepares the PayPal Sandbox Order resource. Does NOT capture payment.
+   */
+  fastify.post('/api/v1/payments/orders', async (req, reply) => {
+    const parseResult = createOrderRequestSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      throw new ValidationError('Invalid order creation payload', parseResult.error.flatten());
+    }
+
+    const payload = parseResult.data;
+    const requestId = req.id as string;
+
+    // Audit order creation request
+    await auditRepo.recordEvent({
+      requestId,
+      agentId: payload.agentId,
+      eventType: 'REQUEST_RECEIVED',
+      status: 'SUCCESS',
+      payloadSummary: {
+        operation: 'CREATE_ORDER',
+        amount: payload.amount,
+        currency: payload.currency,
+        recipientEmail: payload.recipient.email,
+        description: payload.description,
+      },
+    });
+
+    // Threat Scanner
+    const textToScan = [payload.promptContext, payload.description].filter(Boolean).join(' \n ');
+    const scanResult = scanner.scan(textToScan);
+
+    if (scanResult.isThreatDetected) {
+      await auditRepo.recordEvent({
+        requestId,
+        agentId: payload.agentId,
+        eventType: 'INJECTION_BLOCKED',
+        status: 'BLOCKED',
+        riskScore: scanResult.riskScore,
+        payloadSummary: { findings: scanResult.findings },
+        errorMessage: 'Order creation rejected due to detected prompt injection.',
+      });
+
+      throw new InjectionDetectedError(
+        'Order creation rejected: prompt injection detected in agent context.',
+        { scanResult }
+      );
+    }
+
+    // Deterministic Policy Check
+    const policyResult = await policyEngine.evaluate({
+      request: {
+        agentId: payload.agentId,
+        requestId,
+        amount: payload.amount,
+        currency: payload.currency,
+        recipient: payload.recipient,
+        description: payload.description,
+      },
+    });
+
+    if (policyResult.decision === 'DENY') {
+      await auditRepo.recordEvent({
+        requestId,
+        agentId: payload.agentId,
+        eventType: 'POLICY_BLOCKED',
+        status: 'BLOCKED',
+        policyDecision: 'DENY',
+        payloadSummary: { violations: policyResult.violations },
+      });
+
+      throw new PolicyViolationError('Order creation blocked by security policy.', {
+        violations: policyResult.violations,
+      });
+    }
+
+    // Create PayPal Sandbox Order
+    const order = await paymentAdapter.createOrder(
+      {
+        agentId: payload.agentId,
+        requestId,
+        amount: payload.amount,
+        currency: payload.currency,
+        recipient: payload.recipient,
+        description: payload.description,
+        intent: payload.intent || 'CAPTURE',
+      },
+      requestId
+    );
+
+    const approveLink = order.links?.find((l) => l.rel === 'approve')?.href;
+
+    await auditRepo.recordEvent({
+      requestId,
+      agentId: payload.agentId,
+      eventType: 'ORDER_CREATED',
+      status: 'SUCCESS',
+      payloadSummary: {
+        paypalOrderId: order.id,
+        status: order.status,
+        approveLink,
+      },
+    });
+
+    return reply.status(201).send({
+      requestId,
+      orderId: order.id,
+      status: order.status,
+      intent: order.intent,
+      links: order.links,
+      approvalUrl: approveLink,
+      securityVerification: {
+        injectionScan: 'PASSED',
+        policyDecision: policyResult.decision,
+      },
+    });
+  });
+
+  /**
+   * 2. Retrieve & Reconcile Order Details
+   */
+  fastify.get('/api/v1/payments/orders/:orderId', async (req, reply) => {
+    const { orderId } = req.params as { orderId: string };
+    const query = req.query as {
+      amount?: string;
+      currency?: string;
+      recipientEmail?: string;
+      referenceId?: string;
+    };
+
+    const order = await paymentAdapter.getOrderDetails(orderId);
+
+    // Optional reconciliation if parameters are provided
+    let reconciliation = null;
+    if (query.amount || query.currency || query.recipientEmail || query.referenceId) {
+      reconciliation = await paymentAdapter.reconcileOrder(orderId, {
+        amount: query.amount ? parseFloat(query.amount) : undefined,
+        currency: query.currency,
+        recipientEmail: query.recipientEmail,
+        referenceId: query.referenceId,
+      });
+    }
+
+    return reply.status(200).send({
+      orderId: order.id,
+      status: order.status,
+      intent: order.intent,
+      purchase_units: order.purchase_units,
+      links: order.links,
+      reconciliation,
+    });
+  });
+
+  /**
+   * 3. Capture Approved Order (Payment Execution)
+   * Strictly requires deterministic policy authorization before any payment execution call.
+   */
+  fastify.post('/api/v1/payments/orders/:orderId/capture', async (req, reply) => {
+    const { orderId } = req.params as { orderId: string };
+    const parseResult = captureOrderRequestSchema.safeParse(req.body);
+
+    if (!parseResult.success) {
+      throw new ValidationError('Invalid order capture payload', parseResult.error.flatten());
+    }
+
+    const payload = parseResult.data;
+    const requestId = req.id as string;
+
+    // Audit capture request
+    await auditRepo.recordEvent({
+      requestId,
+      agentId: payload.agentId,
+      eventType: 'REQUEST_RECEIVED',
+      status: 'SUCCESS',
+      payloadSummary: {
+        operation: 'CAPTURE_ORDER',
+        orderId,
+        amount: payload.amount,
+        currency: payload.currency,
+      },
+    });
+
+    // 1. Adversarial Injection Scan
+    const textToScan = [payload.promptContext, payload.description].filter(Boolean).join(' \n ');
+    const scanResult = scanner.scan(textToScan);
+
+    if (scanResult.isThreatDetected) {
+      await auditRepo.recordEvent({
+        requestId,
+        agentId: payload.agentId,
+        eventType: 'INJECTION_BLOCKED',
+        status: 'BLOCKED',
+        riskScore: scanResult.riskScore,
+        errorMessage: 'Capture rejected due to detected prompt injection.',
+      });
+
+      throw new InjectionDetectedError('Capture rejected: adversarial injection detected.', {
+        scanResult,
+      });
+    }
+
+    // 2. Deterministic Policy Authorization
+    const policyResult = await policyEngine.evaluate({
+      request: {
+        agentId: payload.agentId,
+        requestId,
+        amount: payload.amount,
+        currency: payload.currency,
+        recipient: payload.recipient,
+        description: payload.description,
+        humanApprovalToken: payload.humanApprovalToken,
+      },
+    });
+
+    if (policyResult.decision === 'DENY') {
+      await auditRepo.recordEvent({
+        requestId,
+        agentId: payload.agentId,
+        eventType: 'POLICY_BLOCKED',
+        status: 'BLOCKED',
+        policyDecision: 'DENY',
+        payloadSummary: { violations: policyResult.violations },
+      });
+
+      throw new PolicyViolationError('Payment capture blocked by deterministic policy.', {
+        violations: policyResult.violations,
+      });
+    }
+
+    if (policyResult.decision === 'REQUIRE_HUMAN_APPROVAL') {
+      await auditRepo.recordEvent({
+        requestId,
+        agentId: payload.agentId,
+        eventType: 'APPROVAL_REQUIRED',
+        status: 'PENDING_APPROVAL',
+        policyDecision: 'REQUIRE_HUMAN_APPROVAL',
+      });
+
+      throw new HumanApprovalRequiredError(
+        'Transaction exceeds automated authorization threshold. Explicit human approval token required.',
+        { violations: policyResult.violations }
+      );
+    }
+
+    // 3. Authorized -> Proceed to Execute Payment
+    const paymentResult = await paymentAdapter.executePayment(
+      {
+        agentId: payload.agentId,
+        requestId,
+        amount: payload.amount,
+        currency: payload.currency,
+        recipient: payload.recipient,
+        description: payload.description,
+      },
+      requestId,
+      orderId
+    );
+
+    if (paymentResult.executed) {
+      await policyEngine.recordApprovedSpend(payload.agentId, payload.amount);
+    }
+
+    await auditRepo.recordEvent({
+      requestId,
+      agentId: payload.agentId,
+      eventType: paymentResult.executed ? 'PAYMENT_COMPLETED' : 'PAYMENT_FAILED',
+      status: paymentResult.executed ? 'SUCCESS' : 'FAILED',
+      payloadSummary: {
+        orderId,
+        executed: paymentResult.executed,
+        paypalCaptureId: paymentResult.paypalCaptureId,
+      },
+    });
+
+    const statusCode = paymentResult.executed ? 200 : 502;
+    return reply.status(statusCode).send({
+      ...paymentResult,
+      securityVerification: {
+        injectionScan: 'PASSED',
+        policyDecision: 'ALLOW',
+      },
+    });
+  });
+
+  /**
+   * 4. Unified Payment Initiation (Backwards-compatible gateway entrypoint)
+   */
   fastify.post('/api/v1/payments/initiate', async (req, reply) => {
     // 1. Validate request payload schema
     const parseResult = paymentInitiateRequestSchema.safeParse(req.body);
@@ -135,8 +426,7 @@ export const paymentRoutes: FastifyPluginAsync<PaymentRouteOptions> = async (
       policyDecision: 'ALLOW',
     });
 
-    // 5. Payment Adapter Dispatch
-    // If dryRun requested or foundation mode active, record guarded status and do not return fake success
+    // 5. Dry-Run Handling
     if (payload.dryRun) {
       await auditRepo.recordEvent({
         requestId,
@@ -163,7 +453,7 @@ export const paymentRoutes: FastifyPluginAsync<PaymentRouteOptions> = async (
       });
     }
 
-    // Dispatch to payment adapter
+    // 6. Dispatch to Payment Adapter
     await auditRepo.recordEvent({
       requestId,
       agentId: payload.agentId,
@@ -182,7 +472,8 @@ export const paymentRoutes: FastifyPluginAsync<PaymentRouteOptions> = async (
           description: payload.description,
           intent: payload.intent,
         },
-        requestId
+        requestId,
+        payload.orderId
       );
 
       // Record approved spend in policy tracker if payment was executed
