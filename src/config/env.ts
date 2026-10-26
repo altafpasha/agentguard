@@ -19,6 +19,12 @@ const envSchema = z.object({
   OPENROUTER_MODEL: z.string().default('anthropic/claude-3.5-sonnet'),
   OPENROUTER_BASE_URL: z.string().url().default('https://openrouter.ai/api/v1'),
   OPENROUTER_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
+  OPENROUTER_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
+  OPENROUTER_MAX_CONTEXT_CHARS: z.coerce.number().int().min(500).max(100000).default(16000),
+  OPENROUTER_RATE_LIMIT_RPM: z.coerce.number().int().min(1).max(1000).default(20),
+  POLICY_REQUIRE_AI_RISK_ANALYSIS: z
+    .preprocess((val) => val === 'true' || val === true, z.boolean())
+    .default(false),
 
   // PayPal Sandbox Adapter
   PAYPAL_CLIENT_ID: z.string().default('sandbox_client_id_placeholder'),
@@ -85,6 +91,11 @@ export function getSanitizedConfig(config: EnvConfig): Record<string, unknown> {
     OPENROUTER_API_KEY: maskSecret(config.OPENROUTER_API_KEY),
     OPENROUTER_MODEL: config.OPENROUTER_MODEL,
     OPENROUTER_BASE_URL: config.OPENROUTER_BASE_URL,
+    OPENROUTER_TIMEOUT_MS: config.OPENROUTER_TIMEOUT_MS,
+    OPENROUTER_MAX_RETRIES: config.OPENROUTER_MAX_RETRIES,
+    OPENROUTER_MAX_CONTEXT_CHARS: config.OPENROUTER_MAX_CONTEXT_CHARS,
+    OPENROUTER_RATE_LIMIT_RPM: config.OPENROUTER_RATE_LIMIT_RPM,
+    POLICY_REQUIRE_AI_RISK_ANALYSIS: config.POLICY_REQUIRE_AI_RISK_ANALYSIS,
     PAYPAL_CLIENT_ID: maskSecret(config.PAYPAL_CLIENT_ID),
     PAYPAL_CLIENT_SECRET: maskSecret(config.PAYPAL_CLIENT_SECRET),
     PAYPAL_ENVIRONMENT: config.PAYPAL_ENVIRONMENT,

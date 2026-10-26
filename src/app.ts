@@ -15,6 +15,7 @@ import {
   paymentRoutes,
   auditRoutes,
 } from './routes';
+import { IRiskAnalyzerProvider, OpenRouterRiskAnalyzer } from './ai';
 
 export interface AppDependencies {
   config?: EnvConfig;
@@ -22,6 +23,7 @@ export interface AppDependencies {
   policyEngine?: PolicyEngine;
   auditRepo?: IAuditRepository;
   paymentAdapter?: IPayPalSandboxAdapter;
+  aiRiskAnalyzer?: IRiskAnalyzerProvider;
 }
 
 export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
@@ -69,6 +71,18 @@ export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
       config.PAYPAL_ALLOW_LIVE_EXECUTION,
       policyEngine.getAuthorizationEngine()
     );
+
+  const aiRiskAnalyzer =
+    dependencies.aiRiskAnalyzer ??
+    new OpenRouterRiskAnalyzer({
+      apiKey: config.OPENROUTER_API_KEY,
+      model: config.OPENROUTER_MODEL,
+      baseUrl: config.OPENROUTER_BASE_URL,
+      timeoutMs: config.OPENROUTER_TIMEOUT_MS,
+      maxRetries: config.OPENROUTER_MAX_RETRIES,
+      maxContextChars: config.OPENROUTER_MAX_CONTEXT_CHARS,
+      rateLimitRpm: config.OPENROUTER_RATE_LIMIT_RPM,
+    });
 
   // Centralized Error Handler
   app.setErrorHandler((error, request, reply) => {
@@ -138,7 +152,7 @@ export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
   // Register Routes
   app.register(healthRoutes, { auditRepo });
   app.register(scanRoutes, { scanner, auditRepo });
-  app.register(policyRoutes, { policyEngine, auditRepo });
+  app.register(policyRoutes, { policyEngine, auditRepo, aiRiskAnalyzer });
   app.register(paymentRoutes, { scanner, policyEngine, paymentAdapter, auditRepo });
   app.register(auditRoutes, { auditRepo });
 

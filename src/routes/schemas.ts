@@ -64,8 +64,21 @@ export const captureOrderRequestSchema = z.object({
   humanApprovalToken: z.string().optional(),
 });
 
+export const riskAnalysisRequestSchema = z.object({
+  agentId: z.string().min(1, 'agentId is required'),
+  intendedPurchase: z.string().min(1, 'intendedPurchase is required'),
+  expectedAmount: z.union([z.number().positive(), z.string().min(1)]),
+  expectedCurrency: z.string().length(3, 'expectedCurrency must be a 3-letter ISO code'),
+  expectedMerchant: z.string().min(1, 'expectedMerchant is required'),
+  productPageText: z.string().optional(),
+  toolResultText: z.string().optional(),
+  policyVersion: z.union([z.number(), z.string()]).default(1),
+  requireRiskAnalysis: z.boolean().default(false),
+});
+
 export type ScanRequestBody = z.infer<typeof scanRequestSchema>;
 export type PolicyEvaluationRequestBody = z.infer<typeof policyEvaluationRequestSchema>;
 export type PaymentInitiateRequestBody = z.infer<typeof paymentInitiateRequestSchema>;
 export type CreateOrderRequestBody = z.infer<typeof createOrderRequestSchema>;
 export type CaptureOrderRequestBody = z.infer<typeof captureOrderRequestSchema>;
+export type RiskAnalysisRequestBody = z.infer<typeof riskAnalysisRequestSchema>;

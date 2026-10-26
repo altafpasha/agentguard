@@ -18,9 +18,10 @@ AgentGuard is a high-assurance, defense-in-depth security gateway built in TypeS
 - [API Reference & Examples](#-api-reference--examples)
   - [Health & Readiness](#1-health--readiness)
   - [Prompt Injection Scanner](#2-prompt-injection-scanner)
-  - [Deterministic Policy Engine](#3-deterministic-policy-engine)
-  - [Payment Initiation Gateway](#4-payment-initiation-gateway)
-  - [Audit Event Verification](#5-audit-trail-queries)
+  - [Deterministic Transaction Authorization Engine](#3-deterministic-transaction-authorization-engine)
+  - [OpenRouter Risk-Analysis Layer](#4-openrouter-risk-analysis-layer--semantic-classifier)
+  - [PayPal Sandbox Orders & Payments](#5-paypal-sandbox-orders--payments)
+  - [Audit Trail Queries](#6-audit-trail-queries)
 - [Feature Implementation Status](#-feature-implementation-status)
 - [Security Guidelines](#-security-guidelines)
 
@@ -220,16 +221,16 @@ npm run build
 
 ### Test Suite Summary
 
-- **Total Test Suites**: 17
-- **Total Tests**: 111 passed | 3 skipped (live sandbox integration skipped safely when credentials absent)
-- **Line Coverage**: ~89.2%
+- **Total Test Suites**: 19
+- **Total Tests**: 136 passed | 4 skipped (live sandbox and live OpenRouter network tests safely skipped when credentials absent)
+- **Line Coverage**: ~89.3%
 - **Modules Covered**:
+  - `src/ai`: OpenRouter Risk Analyzer, rate limiter, bounded retries, Zod schema validation, fail-closed handling, and fixture evaluation suite
   - `src/policy`: Deterministic Authorization Engine, integer cent money parsing, versioned policies, PostgreSQL row-level locks, velocity tracking, decision records
   - `src/payment`: PayPal Sandbox client OAuth token lifecycle, order creation, capture, timeout status reconciliation, and server authorization verification
   - `src/scanner`: Regex rules, zero-width Unicode stripping, base64 decoding, risk scoring
-  - `src/ai`: OpenRouter client timeouts, retries, non-authoritative semantic analyzer fallbacks
   - `src/audit`: In-memory & PostgreSQL audit logging, schema creation, recursive secret redaction
-  - `src/routes`: API contracts for health, scan, policy evaluation & authorization, policy history, payment orders/capture, and audit queries
+  - `src/routes`: API contracts for health, scan, policy evaluation & authorization, policy history, AI risk analysis, payment orders/capture, and audit queries
 
 ---
 
@@ -453,7 +454,70 @@ Response (`202 Accepted` when requiring human approval, `200 OK` when allowed, `
 
 ---
 
-### 4. PayPal Sandbox Orders & Payments
+### 4. OpenRouter Risk-Analysis Layer & Semantic Classifier
+
+AgentGuard integrates an auxiliary risk-analysis layer powered by OpenRouter to analyze untrusted third-party product pages, scraped merchant text, and tool outputs for adversarial prompt injections, merchant mismatches, price surging, and payment diversion.
+
+#### A. Core Guarantees & Safeguards
+1. **Deterministic Block Inviolability**: A deterministic policy block **can NEVER be overridden by AI**. If the policy engine rejects a purchase, the final decision remains `BLOCK` regardless of whether the AI classifier suggests `ALLOW`.
+2. **Context Minimization**: Passes **only** the minimum necessary context to the model: verified transaction fields (`<TRUSTED_PURCHASE_INTENT>`) and untrusted product-page or tool text (`<UNTRUSTED_CONTENT>`). No API keys, session tokens, or sensitive credentials are ever sent.
+3. **Explicit Untrusted Boundary Instruction**: The classifier is explicitly instructed that content within `<UNTRUSTED_CONTENT>` is inert untrusted data, and under no circumstances to execute or obey instructions, commands, or jailbreaks contained within it.
+4. **Structured Output & Zod Validation**: Responses are validated strictly via Zod (`riskClassifierResponseSchema`), enforcing value ranges (`0.0 <= riskScore <= 1.0`), valid risk categories, reasons, suspicious spans, and recommendations. Malformed responses are rejected immediately.
+5. **Fail-Closed Semantics**: An unavailable, timed-out, rate-limited, or malformed classifier **never** silently defaults to a low-risk score (`0.0`). When policy requires risk analysis (`requireRiskAnalysis: true`), classifier failure causes payment execution to be **HELD** (`HOLD`) pending human approval.
+6. **Rate Limiting & Bounded Retries**: Employs an in-memory sliding-window rate limiter (default 20 req/min), bounded retries with backoff for transient 5xx errors, and automatic cooldown when encountering upstream HTTP 429 `Retry-After` headers.
+7. **Probabilistic Disclaimer**: Transparently documents in every decision payload:  
+   *"AI risk analysis is probabilistic and strictly advisory. It does not guarantee detection of all prompt injections, jailbreaks, or evasion techniques. Deterministic payment authorization rules always take precedence."*
+
+#### B. Risk Analysis Endpoint: `POST /api/v1/risk/analyze`
+
+**Request with Untrusted Product Page**:
+```bash
+curl -X POST http://localhost:3000/api/v1/risk/analyze \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agentId": "agent-finance-01",
+    "intendedPurchase": "Logitech MX Master 3S Mouse",
+    "expectedAmount": 99.99,
+    "expectedCurrency": "USD",
+    "expectedMerchant": "official-store@logitech.com",
+    "productPageText": "Logitech MX Master 3S Wireless Performance Mouse. MSRP $99.99. Official Logitech Outlet.",
+    "requireRiskAnalysis": true
+  }'
+```
+Response (`200 OK` on ALLOW, `202 Accepted` on HOLD, `403 Forbidden` on BLOCK):
+```json
+{
+  "requestId": "1e2f9d8a-6b5c-4d3e-8f2a-7c9b0e1d2f3a",
+  "finalDecision": "ALLOW",
+  "deterministicDecision": "ALLOW",
+  "reasons": [
+    "AI_RISK_ANALYSIS_PASSED: Content verified benign with low risk."
+  ],
+  "violations": [],
+  "aiOutcome": {
+    "requestId": "1e2f9d8a-6b5c-4d3e-8f2a-7c9b0e1d2f3a",
+    "modelId": "anthropic/claude-3.5-sonnet",
+    "policyVersion": 1,
+    "latencyMs": 340,
+    "status": "SUCCESS",
+    "riskScore": 0.05,
+    "riskCategory": "BENIGN",
+    "reasons": [
+      "Product description, price, and vendor match trusted intent perfectly."
+    ],
+    "suspiciousSpans": [],
+    "explanation": "Benign purchase verified.",
+    "recommendation": "ALLOW",
+    "securityDisclaimer": "AI risk analysis is probabilistic and strictly advisory. It does not guarantee detection of all prompt injections, jailbreaks, or evasion techniques. Deterministic payment authorization rules always take precedence."
+  },
+  "isAiOverridden": false,
+  "securityDisclaimer": "AI risk analysis is probabilistic and strictly advisory. It does not guarantee detection of all prompt injections, jailbreaks, or evasion techniques. Deterministic payment authorization rules always take precedence."
+}
+```
+
+---
+
+### 5. PayPal Sandbox Orders & Payments
 
 #### A. Separated Order Creation: `POST /api/v1/payments/orders`
 Creates a real PayPal Sandbox Order resource. **Strictly separated from payment execution**; calling this endpoint establishes the payment intent and returns an approval URL, but does **not** transfer or capture funds.
@@ -593,7 +657,7 @@ Response (`200 OK`):
 
 ---
 
-### 5. Audit Trail Queries
+### 6. Audit Trail Queries
 
 #### Query by Request ID: `GET /api/v1/audit/:requestId`
 ```bash
@@ -658,15 +722,16 @@ curl -X GET http://localhost:3000/api/v1/audit/agent/agent-procurement?limit=20
 | **Injection Scanner** | ✅ Complete | Zero-width Unicode restoration, Base64 payload decoding, regex heuristic rules, risk scoring, threat levels |
 | **Deterministic Authorization Engine** | ✅ Complete | Tripartite decision contract (`ALLOW`, `HOLD`, `BLOCK`), integer cent validation, velocity windows, merchant allow/denylists, deny-by-default, and single-use cryptographic authorization tokens |
 | **PostgreSQL Concurrency Protection** | ✅ Complete | Durable state in PostgreSQL 16; atomic daily spend checks using row-level locking (`SELECT ... FOR UPDATE`), transaction rollback, and versioned policy history |
-| **OpenRouter AI Provider** | ✅ Complete | Strict authority separation: advisory semantic analyzer with fallback resilience, non-authoritative disclaimer |
+| **OpenRouter Risk-Analysis Layer** | ✅ Complete | Minimum context isolation (`<TRUSTED>` vs `<UNTRUSTED>`), Zod schema validation, sliding-window rate limiter, fail-closed semantics, and 8-scenario local fixture evaluation suite |
 | **PayPal Sandbox REST Client** | ✅ Complete | Official Orders v2 REST client (`api-m.sandbox.paypal.com`), OAuth2 token caching with expiry buffer & promise coalescing |
 | **Separated Order Creation & Capture** | ✅ Complete | `POST /api/v1/payments/orders` creates order without capture; `POST .../capture` strictly requires policy authorization |
 | **Order Reconciliation & Idempotency** | ✅ Complete | `PayPal-Request-Id` idempotency tracking; ambiguous network timeouts query `GET /v2/checkout/orders/{id}` before retry |
 | **Server Authorization Token Verification** | ✅ Complete | PayPal adapter verifies server-issued authorization tokens before execution; ignores client-supplied `"approved": true` flags |
 | **PostgreSQL Audit Repository** | ✅ Complete | SQL schema with UUID & indexes, recursive secret sanitizer, connection pooling, graceful shutdown |
 | **Containerization** | ✅ Complete | Multi-stage Dockerfile (non-root `node` runner), Docker Compose with healthchecks and network isolation |
-| **Test Suite & Coverage** | ✅ Complete | 111 tests passing across 17 test files (100% active tests passing); unit, contract, and live integration tests |
+| **Test Suite & Coverage** | ✅ Complete | 136 tests passing across 19 test files (100% active tests passing); unit, contract, fixture evaluation, and live integration tests |
 | **Live PayPal Sandbox Integration Test** | ✅ Labeled & Ready | Runs automatically when real credentials are placed in `.env`; explicitly skipped with labeled notification when credentials are not supplied |
+| **Live OpenRouter Integration Test** | ✅ Labeled & Ready | Runs automatically when real credentials are placed in `.env`; explicitly skipped with labeled notification when credentials are not supplied |
 
 ---
 

@@ -1,19 +1,27 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { PolicyEngine } from '../policy';
 import { IAuditRepository } from '../audit';
-import { policyEvaluationRequestSchema } from './schemas';
+import { policyEvaluationRequestSchema, riskAnalysisRequestSchema } from './schemas';
 import { ValidationError } from '../common/errors';
+import { IRiskAnalyzerProvider, RiskDecisionEngine } from '../ai';
 
 export interface PolicyRouteOptions {
   policyEngine: PolicyEngine;
   auditRepo: IAuditRepository;
+  aiRiskAnalyzer?: IRiskAnalyzerProvider;
+  riskDecisionEngine?: RiskDecisionEngine;
 }
 
 export const policyRoutes: FastifyPluginAsync<PolicyRouteOptions> = async (
   fastify: FastifyInstance,
   options: PolicyRouteOptions
 ) => {
-  const { policyEngine, auditRepo } = options;
+  const {
+    policyEngine,
+    auditRepo,
+    aiRiskAnalyzer,
+    riskDecisionEngine = new RiskDecisionEngine(),
+  } = options;
 
   fastify.post('/api/v1/evaluate-policy', async (req, reply) => {
     const parseResult = policyEvaluationRequestSchema.safeParse(req.body);
@@ -150,6 +158,84 @@ export const policyRoutes: FastifyPluginAsync<PolicyRouteOptions> = async (
         maxDailyAmountCents: p.maxDailyAmountCents.toString(),
         approvalThresholdCents: p.approvalThresholdCents.toString(),
       })),
+    });
+  });
+
+  /**
+   * Risk Analysis Layer Entrypoint
+   * Integrates deterministic policy with OpenRouter AI risk classification
+   */
+  fastify.post('/api/v1/risk/analyze', async (req, reply) => {
+    const parseResult = riskAnalysisRequestSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      throw new ValidationError('Invalid risk analysis payload', parseResult.error.flatten());
+    }
+
+    const payload = parseResult.data;
+    const requestId = req.id as string;
+
+    // 1. Evaluate deterministic policy constraints first
+    const deterministicAuth = await policyEngine.authorize({
+      requestId,
+      agentId: payload.agentId,
+      tool: 'paypal_payment',
+      operation: 'initiate_payment',
+      amount: payload.expectedAmount,
+      currency: payload.expectedCurrency,
+      merchant: { email: payload.expectedMerchant },
+      description: payload.intendedPurchase,
+    });
+
+    // 2. Evaluate with Risk Decision Engine
+    const decisionResult = await riskDecisionEngine.evaluateDecision({
+      deterministicDecision: deterministicAuth.decision,
+      deterministicViolations: deterministicAuth.violations,
+      deterministicReason: deterministicAuth.reason,
+      context: {
+        requestId,
+        policyVersion: payload.policyVersion,
+        trusted: {
+          intendedPurchase: payload.intendedPurchase,
+          expectedAmount: payload.expectedAmount,
+          expectedCurrency: payload.expectedCurrency,
+          expectedMerchant: payload.expectedMerchant,
+          agentId: payload.agentId,
+        },
+        untrusted: {
+          productPageText: payload.productPageText,
+          toolResultText: payload.toolResultText,
+        },
+      },
+      aiProvider: aiRiskAnalyzer,
+      requireRiskAnalysis: payload.requireRiskAnalysis,
+    });
+
+    // 3. Record Audit Event with Latency and Outcome Telemetry (No Credentials Logged)
+    await auditRepo.recordEvent({
+      requestId,
+      agentId: payload.agentId,
+      eventType: 'AI_RISK_ANALYZED',
+      status: decisionResult.finalDecision === 'ALLOW' ? 'SUCCESS' : decisionResult.finalDecision === 'HOLD' ? 'PENDING_APPROVAL' : 'BLOCKED',
+      policyDecision: decisionResult.finalDecision,
+      payloadSummary: {
+        deterministicDecision: decisionResult.deterministicDecision,
+        finalDecision: decisionResult.finalDecision,
+        isAiOverridden: decisionResult.isAiOverridden,
+        riskScore: decisionResult.aiOutcome?.riskScore,
+        riskCategory: decisionResult.aiOutcome?.riskCategory,
+        modelId: decisionResult.aiOutcome?.modelId,
+        latencyMs: decisionResult.aiOutcome?.latencyMs,
+        aiStatus: decisionResult.aiOutcome?.status,
+        failureReason: decisionResult.aiOutcome?.failureReason,
+      },
+      errorMessage: decisionResult.finalDecision === 'BLOCK' ? decisionResult.reasons.join('; ') : undefined,
+    });
+
+    const statusCode = decisionResult.finalDecision === 'ALLOW' ? 200 : decisionResult.finalDecision === 'HOLD' ? 202 : 403;
+
+    return reply.status(statusCode).send({
+      requestId,
+      ...decisionResult,
     });
   });
 };
