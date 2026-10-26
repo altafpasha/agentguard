@@ -1,0 +1,144 @@
+import fastify, { FastifyInstance } from 'fastify';
+import cors from '@fastify/cors';
+import { randomUUID } from 'crypto';
+import { EnvConfig, getConfig } from './config';
+import { getLoggerOptions } from './common/logger';
+import { AppError } from './common/errors';
+import { InjectionScanner, defaultScanner } from './scanner';
+import { PolicyEngine } from './policy';
+import { IAuditRepository, PostgresAuditRepository } from './audit';
+import { IPayPalSandboxAdapter, PayPalSandboxAdapter } from './payment';
+import {
+  healthRoutes,
+  scanRoutes,
+  policyRoutes,
+  paymentRoutes,
+  auditRoutes,
+} from './routes';
+
+export interface AppDependencies {
+  config?: EnvConfig;
+  scanner?: InjectionScanner;
+  policyEngine?: PolicyEngine;
+  auditRepo?: IAuditRepository;
+  paymentAdapter?: IPayPalSandboxAdapter;
+}
+
+export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
+  const config = dependencies.config ?? getConfig();
+
+  const app = fastify({
+    logger: getLoggerOptions(config.LOG_LEVEL),
+    genReqId: (req) => {
+      const headerReqId = req.headers['x-request-id'];
+      if (typeof headerReqId === 'string' && headerReqId.trim().length > 0) {
+        return headerReqId;
+      }
+      return randomUUID();
+    },
+  });
+
+  // Register CORS
+  app.register(cors, {
+    origin: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
+    exposedHeaders: ['X-Request-Id'],
+  });
+
+  // Always echo x-request-id in response headers
+  app.addHook('onSend', async (request, reply) => {
+    reply.header('x-request-id', request.id);
+  });
+
+  // Initialize service dependencies
+  const scanner = dependencies.scanner ?? defaultScanner;
+  const policyEngine = dependencies.policyEngine ?? PolicyEngine.fromConfig(config);
+  const auditRepo =
+    dependencies.auditRepo ?? new PostgresAuditRepository(config.DATABASE_URL);
+  const paymentAdapter =
+    dependencies.paymentAdapter ??
+    new PayPalSandboxAdapter(
+      {
+        clientId: config.PAYPAL_CLIENT_ID,
+        clientSecret: config.PAYPAL_CLIENT_SECRET,
+        environment: config.PAYPAL_ENVIRONMENT,
+        apiBaseUrl: config.PAYPAL_API_BASE_URL,
+      },
+      false // Foundation phase: live execution is strictly guarded
+    );
+
+  // Centralized Error Handler
+  app.setErrorHandler((error, request, reply) => {
+    const requestId = request.id as string;
+    const timestamp = new Date().toISOString();
+
+    const err = error as { statusCode?: number; errorCode?: string; message?: string; validation?: unknown; details?: unknown };
+
+    request.log.error({
+      err: error,
+      requestId,
+      statusCode: err.statusCode ?? 500,
+    });
+
+    if (error instanceof AppError) {
+      return reply.status(error.statusCode).send({
+        statusCode: error.statusCode,
+        error: error.errorCode,
+        message: error.message,
+        requestId,
+        timestamp,
+        details: error.details,
+      });
+    }
+
+    // Fastify schema validation error
+    if (err.validation !== undefined) {
+      return reply.status(400).send({
+        statusCode: 400,
+        error: 'VALIDATION_ERROR',
+        message: err.message ?? 'Validation failed',
+        requestId,
+        timestamp,
+        details: err.validation,
+      });
+    }
+
+    // Unhandled / Internal Server Error
+    const statusCode = err.statusCode && err.statusCode >= 400 && err.statusCode < 600
+      ? err.statusCode
+      : 500;
+
+    return reply.status(statusCode).send({
+      statusCode,
+      error: statusCode === 404 ? 'NOT_FOUND' : 'INTERNAL_SERVER_ERROR',
+      message: config.NODE_ENV === 'production' && statusCode === 500
+        ? 'An unexpected internal error occurred'
+        : (err.message ?? 'An unexpected error occurred'),
+      requestId,
+      timestamp,
+    });
+  });
+
+  // Centralized 404 Not Found Handler
+  app.setNotFoundHandler((request, reply) => {
+    const requestId = request.id as string;
+    const timestamp = new Date().toISOString();
+    return reply.status(404).send({
+      statusCode: 404,
+      error: 'NOT_FOUND',
+      message: `Route ${request.method}:${request.url} not found`,
+      requestId,
+      timestamp,
+    });
+  });
+
+  // Register Routes
+  app.register(healthRoutes, { auditRepo });
+  app.register(scanRoutes, { scanner, auditRepo });
+  app.register(policyRoutes, { policyEngine, auditRepo });
+  app.register(paymentRoutes, { scanner, policyEngine, paymentAdapter, auditRepo });
+  app.register(auditRoutes, { auditRepo });
+
+  return app;
+}

@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: agentguard-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-agentguard_dev}
+    ports:
+      - "${POSTGRES_PORT:-54329}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./src/audit/schema.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${POSTGRES_DB:-agentguard_dev}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agentguard-net
+
+  agentguard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: agentguard-gateway
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOST: 0.0.0.0
+      LOG_LEVEL: info
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-agentguard_dev}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-sk-or-v1-placeholder}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-3.5-sonnet}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-sandbox_client_id}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-sandbox_client_secret}
+      PAYPAL_ENVIRONMENT: sandbox
+      PAYPAL_API_BASE_URL: https://api-m.sandbox.paypal.com
+      POLICY_MAX_TRANSACTION_AMOUNT: ${POLICY_MAX_TRANSACTION_AMOUNT:-50.00}
+      POLICY_MAX_DAILY_AMOUNT: ${POLICY_MAX_DAILY_AMOUNT:-200.00}
+      POLICY_ALLOWED_CURRENCIES: ${POLICY_ALLOWED_CURRENCIES:-USD,EUR,GBP}
+      POLICY_REQUIRE_HUMAN_APPROVAL_THRESHOLD: ${POLICY_REQUIRE_HUMAN_APPROVAL_THRESHOLD:-25.00}
+      POLICY_RECIPIENT_DENYLIST: ${POLICY_RECIPIENT_DENYLIST:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - agentguard-net
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  agentguard-net:
+    driver: bridge
