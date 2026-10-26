@@ -220,16 +220,16 @@ npm run build
 
 ### Test Suite Summary
 
-- **Total Test Suites**: 13
-- **Total Tests**: 67 passed
-- **Statement & Line Coverage**: >95%
+- **Total Test Suites**: 17
+- **Total Tests**: 111 passed | 3 skipped (live sandbox integration skipped safely when credentials absent)
+- **Line Coverage**: ~89.2%
 - **Modules Covered**:
+  - `src/policy`: Deterministic Authorization Engine, integer cent money parsing, versioned policies, PostgreSQL row-level locks, velocity tracking, decision records
+  - `src/payment`: PayPal Sandbox client OAuth token lifecycle, order creation, capture, timeout status reconciliation, and server authorization verification
   - `src/scanner`: Regex rules, zero-width Unicode stripping, base64 decoding, risk scoring
-  - `src/policy`: Single transaction limits, rolling daily spend, currency allowlist, recipient denylist, HITL requirement
   - `src/ai`: OpenRouter client timeouts, retries, non-authoritative semantic analyzer fallbacks
-  - `src/payment`: PayPal Sandbox adapter OAuth, order creation, foundation phase guarded execution
   - `src/audit`: In-memory & PostgreSQL audit logging, schema creation, recursive secret redaction
-  - `src/routes`: API contracts for health, scan, policy, payment, and audit queries
+  - `src/routes`: API contracts for health, scan, policy evaluation & authorization, policy history, payment orders/capture, and audit queries
 
 ---
 
@@ -329,10 +329,97 @@ Response (`403 Forbidden`):
 
 ---
 
-### 3. Deterministic Policy Engine
+### 3. Deterministic Transaction Authorization Engine
 
-#### `POST /api/v1/evaluate-policy`
-Evaluate a candidate transaction against deterministic rules without triggering payment dispatch.
+AgentGuard's deterministic authorization engine provides mathematical certainty and hard guarantees for AI payment requests. All decisions are evaluated before any advisory LLM is consulted.
+
+#### A. Decision Contract
+The engine returns an unambiguous tripartite decision:
+- **`ALLOW`**: The policy permits the specific action. The engine issues a time-bounded cryptographic server authorization token (`serverAuthorizationToken: "auth_<uuid>"`). Payment execution adapters require this token.
+- **`HOLD`**: The action meets or exceeds the mandatory human approval threshold. Persisted as pending human approval; payment execution is strictly prohibited until a valid approval token is submitted.
+- **`BLOCK`**: The action is denied due to policy violations (e.g. over limits, velocity exceeded, unauthorized tool, or unknown/denied merchant). Payment execution is strictly prohibited. Idempotency guarantees that a blocked request cannot become executable through retries.
+
+#### B. Core Guarantees & Safeguards
+1. **Integer Cents Representation**: Floating-point values (e.g., `0.1 + 0.2`) are strictly avoided. Money is validated and converted into exact integer cents (`BigInt`) using `parseMoneyToCents()`. Fractional cents (e.g., `10.505`) and negative/zero values are rejected immediately.
+2. **Untrusted Agent Context**: The engine never trusts agent-supplied flags (such as `"approved": true`, custom policies, or self-reported spend totals). All limits are queried directly from authoritative state.
+3. **Deny-by-Default**: Unknown payment tools, unconfigured operations, or missing policy IDs result in an immediate `BLOCK`.
+4. **PostgreSQL Concurrency Protection**: Daily spend limits are locked atomically using row-level database locks (`SELECT spent_cents FROM agent_daily_spend ... FOR UPDATE` inside a PostgreSQL transaction) to prevent race conditions and budget overspend under high concurrency.
+5. **Per-Agent Velocity Windows**: Rolling time-window limits restrict the frequency of transactions within a given time period (e.g., max 5 transactions per 60 seconds).
+6. **Replay & Tampering Protection**: Authorization tokens are bound to the exact `requestId`, `agentId`, `tool`, `operation`, `amountCents`, and `merchant`. Any tampering causes verification failure. Tokens are single-use (`isExecuted: true`); attempts to execute twice are rejected with `409 Conflict`.
+
+#### C. Requesting Transaction Authorization: `POST /api/v1/policies/authorize`
+Inspects an agent action and returns an authoritative decision record.
+
+```bash
+curl -X POST http://localhost:3000/api/v1/policies/authorize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "requestId": "9c1b7a2d-4e5f-4a3b-8c2d-1e0f9a8b7c6d",
+    "agentId": "agent-procurement",
+    "tool": "paypal_sandbox",
+    "operation": "capture_order",
+    "amount": "20.00",
+    "currency": "USD",
+    "merchant": "sb-merchant1@business.example.com",
+    "description": "Replenish server quota"
+  }'
+```
+Response (`200 OK` on ALLOW, `202 Accepted` on HOLD, `403 Forbidden` on BLOCK):
+```json
+{
+  "requestId": "9c1b7a2d-4e5f-4a3b-8c2d-1e0f9a8b7c6d",
+  "agentId": "agent-procurement",
+  "policyId": "default",
+  "policyVersion": 1,
+  "tool": "paypal_sandbox",
+  "operation": "capture_order",
+  "amountCents": 2000,
+  "amountFormatted": "20.00",
+  "currency": "USD",
+  "merchant": "sb-merchant1@business.example.com",
+  "decision": "ALLOW",
+  "serverAuthorizationToken": "auth_9c1b7a2d4e5f4a3b8c2d1e0f9a8b7c6d",
+  "violations": [],
+  "isExecuted": false,
+  "expiresAt": "2026-10-26T10:01:50.000Z",
+  "createdAt": "2026-10-26T09:46:50.000Z"
+}
+```
+
+#### D. Policy Version History: `GET /api/v1/policies/history/:policyId`
+Audits versioned policy definitions and their evolution over time.
+
+```bash
+curl -X GET http://localhost:3000/api/v1/policies/history/default
+```
+Response (`200 OK`):
+```json
+{
+  "policyId": "default",
+  "count": 1,
+  "versions": [
+    {
+      "id": "e8a1d2f3-b4c5-4d6e-8f7a-9b0c1d2e3f4a",
+      "policyId": "default",
+      "version": 1,
+      "name": "Default Strict Sandbox Policy",
+      "maxTransactionAmountCents": 5000,
+      "maxDailySpendCents": 20000,
+      "approvalThresholdCents": 2500,
+      "allowedCurrencies": ["USD", "EUR", "GBP"],
+      "allowedTools": ["paypal_sandbox"],
+      "allowedOperations": ["create_order", "capture_order", "authorize_order"],
+      "velocityLimit": 5,
+      "velocityWindowSeconds": 60,
+      "isActive": true,
+      "createdAt": "2026-10-26T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+#### E. Backward-Compatible Rule Evaluation: `POST /api/v1/evaluate-policy`
+Evaluate a candidate transaction against deterministic rules without generating an authorization token.
 
 ```bash
 curl -X POST http://localhost:3000/api/v1/evaluate-policy \
@@ -569,14 +656,16 @@ curl -X GET http://localhost:3000/api/v1/audit/agent/agent-procurement?limit=20
 | :--- | :---: | :--- |
 | **Request Ingress & Schemas** | ✅ Complete | Fastify 5 + Zod schemas, automatic request ID tracking (`X-Request-Id`), CORS, and centralized error handling |
 | **Injection Scanner** | ✅ Complete | Zero-width Unicode restoration, Base64 payload decoding, regex heuristic rules, risk scoring, threat levels |
-| **Deterministic Policy Engine** | ✅ Complete | Max transaction amount, rolling 24h spend limit, ISO currency allowlist, recipient denylist, HITL approval enforcement |
+| **Deterministic Authorization Engine** | ✅ Complete | Tripartite decision contract (`ALLOW`, `HOLD`, `BLOCK`), integer cent validation, velocity windows, merchant allow/denylists, deny-by-default, and single-use cryptographic authorization tokens |
+| **PostgreSQL Concurrency Protection** | ✅ Complete | Durable state in PostgreSQL 16; atomic daily spend checks using row-level locking (`SELECT ... FOR UPDATE`), transaction rollback, and versioned policy history |
 | **OpenRouter AI Provider** | ✅ Complete | Strict authority separation: advisory semantic analyzer with fallback resilience, non-authoritative disclaimer |
 | **PayPal Sandbox REST Client** | ✅ Complete | Official Orders v2 REST client (`api-m.sandbox.paypal.com`), OAuth2 token caching with expiry buffer & promise coalescing |
 | **Separated Order Creation & Capture** | ✅ Complete | `POST /api/v1/payments/orders` creates order without capture; `POST .../capture` strictly requires policy authorization |
 | **Order Reconciliation & Idempotency** | ✅ Complete | `PayPal-Request-Id` idempotency tracking; ambiguous network timeouts query `GET /v2/checkout/orders/{id}` before retry |
+| **Server Authorization Token Verification** | ✅ Complete | PayPal adapter verifies server-issued authorization tokens before execution; ignores client-supplied `"approved": true` flags |
 | **PostgreSQL Audit Repository** | ✅ Complete | SQL schema with UUID & indexes, recursive secret sanitizer, connection pooling, graceful shutdown |
 | **Containerization** | ✅ Complete | Multi-stage Dockerfile (non-root `node` runner), Docker Compose with healthchecks and network isolation |
-| **Test Suite & Coverage** | ✅ Complete | 87 tests passing across 15 test files (100% active tests passing); unit, contract, and live integration tests |
+| **Test Suite & Coverage** | ✅ Complete | 111 tests passing across 17 test files (100% active tests passing); unit, contract, and live integration tests |
 | **Live PayPal Sandbox Integration Test** | ✅ Labeled & Ready | Runs automatically when real credentials are placed in `.env`; explicitly skipped with labeled notification when credentials are not supplied |
 
 ---

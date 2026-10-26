@@ -104,4 +104,83 @@ describe('Policy Evaluation API Contract (POST /api/v1/evaluate-policy)', () => 
     expect(body.decision).toBe('DENY');
     expect(body.violations.some((v: { ruleId: string }) => v.ruleId === 'POL-003')).toBe(true);
   });
+
+  describe('Deterministic Authorization Contract (POST /api/v1/policies/authorize)', () => {
+    it('returns 200 ALLOW with server authorization token when within policy', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/policies/authorize',
+        payload: {
+          agentId: 'agent-finance',
+          amount: 15.0,
+          currency: 'USD',
+          recipient: { email: 'vendor@valid.com' },
+          description: 'Authorized service invoice',
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.decision).toBe('ALLOW');
+      expect(body.authorizationToken).toBeDefined();
+      expect(body.authorizationToken.startsWith('auth_')).toBe(true);
+      expect(body.amountCents).toBe('1500');
+      expect(body.policyVersion).toBeGreaterThanOrEqual(1);
+    });
+
+    it('returns 202 HOLD when mandatory approval threshold is reached without token', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/policies/authorize',
+        payload: {
+          agentId: 'agent-finance',
+          amount: 35.0, // > 25 threshold, < 50 max
+          currency: 'USD',
+          recipient: { email: 'vendor@valid.com' },
+          description: 'High value invoice',
+        },
+      });
+
+      expect(response.statusCode).toBe(202);
+      const body = JSON.parse(response.body);
+      expect(body.decision).toBe('HOLD');
+      expect(body.authorizationToken).toBeUndefined();
+      expect(body.reason).toContain('Payment execution is prohibited pending human approval');
+    });
+
+    it('returns 403 BLOCK when maximum transaction limit is breached', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/policies/authorize',
+        payload: {
+          agentId: 'agent-finance',
+          amount: 85.0, // > 50 max
+          currency: 'USD',
+          recipient: { email: 'vendor@valid.com' },
+          description: 'Excessive invoice',
+        },
+      });
+
+      expect(response.statusCode).toBe(403);
+      const body = JSON.parse(response.body);
+      expect(body.decision).toBe('BLOCK');
+      expect(body.violations.some((v: string) => v.includes('MAX_AMOUNT_EXCEEDED'))).toBe(true);
+    });
+  });
+
+  describe('Policy Version History (GET /api/v1/policies/history/:policyId)', () => {
+    it('returns version history for active and archived policy versions', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/policies/history/default',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.policyId).toBe('default');
+      expect(body.versionsCount).toBeGreaterThanOrEqual(1);
+      expect(body.history[0].version).toBeDefined();
+      expect(body.history[0].maxAmountCents).toBeDefined();
+    });
+  });
 });

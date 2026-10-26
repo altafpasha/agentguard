@@ -1,4 +1,7 @@
 export * from './types';
+export * from './money';
+export * from './policy-store';
+export * from './authorization-engine';
 export * from './rules/amount-limit.rule';
 export * from './rules/currency.rule';
 export * from './rules/recipient.rule';

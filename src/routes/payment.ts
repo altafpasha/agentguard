@@ -230,49 +230,52 @@ export const paymentRoutes: FastifyPluginAsync<PaymentRouteOptions> = async (
     }
 
     // 2. Deterministic Policy Authorization
-    const policyResult = await policyEngine.evaluate({
-      request: {
-        agentId: payload.agentId,
-        requestId,
-        amount: payload.amount,
-        currency: payload.currency,
-        recipient: payload.recipient,
-        description: payload.description,
-        humanApprovalToken: payload.humanApprovalToken,
-      },
+    const authRecord = await policyEngine.authorize({
+      requestId,
+      agentId: payload.agentId,
+      tool: 'paypal_payment',
+      operation: 'capture_payment',
+      amount: payload.amount,
+      currency: payload.currency,
+      merchant: payload.recipient,
+      description: payload.description || 'Order capture',
+      humanApprovalToken: payload.humanApprovalToken,
     });
 
-    if (policyResult.decision === 'DENY') {
+    if (authRecord.decision === 'BLOCK') {
       await auditRepo.recordEvent({
         requestId,
         agentId: payload.agentId,
         eventType: 'POLICY_BLOCKED',
         status: 'BLOCKED',
-        policyDecision: 'DENY',
-        payloadSummary: { violations: policyResult.violations },
+        policyDecision: 'BLOCK',
+        payloadSummary: { violations: authRecord.violations, reason: authRecord.reason },
+        errorMessage: `Payment capture blocked by deterministic policy: ${authRecord.reason}`,
       });
 
-      throw new PolicyViolationError('Payment capture blocked by deterministic policy.', {
-        violations: policyResult.violations,
-      });
+      throw new PolicyViolationError(
+        `Payment capture blocked by deterministic policy: ${authRecord.reason}`,
+        { violations: authRecord.violations }
+      );
     }
 
-    if (policyResult.decision === 'REQUIRE_HUMAN_APPROVAL') {
+    if (authRecord.decision === 'HOLD') {
       await auditRepo.recordEvent({
         requestId,
         agentId: payload.agentId,
         eventType: 'APPROVAL_REQUIRED',
         status: 'PENDING_APPROVAL',
-        policyDecision: 'REQUIRE_HUMAN_APPROVAL',
+        policyDecision: 'HOLD',
+        payloadSummary: { violations: authRecord.violations, reason: authRecord.reason },
       });
 
       throw new HumanApprovalRequiredError(
         'Transaction exceeds automated authorization threshold. Explicit human approval token required.',
-        { violations: policyResult.violations }
+        { violations: authRecord.violations }
       );
     }
 
-    // 3. Authorized -> Proceed to Execute Payment
+    // 3. Authorized -> Proceed to Execute Payment with server-issued authorization token
     const paymentResult = await paymentAdapter.executePayment(
       {
         agentId: payload.agentId,
@@ -280,10 +283,13 @@ export const paymentRoutes: FastifyPluginAsync<PaymentRouteOptions> = async (
         amount: payload.amount,
         currency: payload.currency,
         recipient: payload.recipient,
-        description: payload.description,
+        description: payload.description || 'Order capture',
       },
       requestId,
-      orderId
+      {
+        preApprovedOrderId: orderId,
+        serverAuthorizationToken: authRecord.authorizationToken || undefined,
+      }
     );
 
     if (paymentResult.executed) {
@@ -373,47 +379,48 @@ export const paymentRoutes: FastifyPluginAsync<PaymentRouteOptions> = async (
     });
 
     // 4. Deterministic Policy Engine Evaluation (Strict Authority)
-    const policyResult = await policyEngine.evaluate({
-      request: {
-        agentId: payload.agentId,
-        requestId,
-        amount: payload.amount,
-        currency: payload.currency,
-        recipient: payload.recipient,
-        description: payload.description,
-        humanApprovalToken: payload.humanApprovalToken,
-      },
+    const authRecord = await policyEngine.authorize({
+      requestId,
+      agentId: payload.agentId,
+      tool: 'paypal_payment',
+      operation: payload.orderId ? 'capture_payment' : 'create_order',
+      amount: payload.amount,
+      currency: payload.currency,
+      merchant: payload.recipient,
+      description: payload.description,
+      humanApprovalToken: payload.humanApprovalToken,
     });
 
-    if (policyResult.decision === 'DENY') {
+    if (authRecord.decision === 'BLOCK') {
       await auditRepo.recordEvent({
         requestId,
         agentId: payload.agentId,
         eventType: 'POLICY_BLOCKED',
         status: 'BLOCKED',
-        policyDecision: 'DENY',
-        payloadSummary: { violations: policyResult.violations },
-        errorMessage: 'Payment initiation blocked by deterministic security policy.',
+        policyDecision: 'BLOCK',
+        payloadSummary: { violations: authRecord.violations, reason: authRecord.reason },
+        errorMessage: `Payment initiation blocked by deterministic security policy: ${authRecord.reason}`,
       });
 
-      throw new PolicyViolationError('Payment initiation blocked by security policy rules.', {
-        violations: policyResult.violations,
-      });
+      throw new PolicyViolationError(
+        `Payment initiation blocked by security policy rules: ${authRecord.reason}`,
+        { violations: authRecord.violations }
+      );
     }
 
-    if (policyResult.decision === 'REQUIRE_HUMAN_APPROVAL') {
+    if (authRecord.decision === 'HOLD') {
       await auditRepo.recordEvent({
         requestId,
         agentId: payload.agentId,
         eventType: 'APPROVAL_REQUIRED',
         status: 'PENDING_APPROVAL',
-        policyDecision: 'REQUIRE_HUMAN_APPROVAL',
-        payloadSummary: { violations: policyResult.violations },
+        policyDecision: 'HOLD',
+        payloadSummary: { violations: authRecord.violations, reason: authRecord.reason },
       });
 
       throw new HumanApprovalRequiredError(
         'Transaction exceeds automated authorization threshold. Explicit human approval token required.',
-        { violations: policyResult.violations }
+        { violations: authRecord.violations }
       );
     }
 
@@ -473,7 +480,10 @@ export const paymentRoutes: FastifyPluginAsync<PaymentRouteOptions> = async (
           intent: payload.intent,
         },
         requestId,
-        payload.orderId
+        {
+          preApprovedOrderId: payload.orderId,
+          serverAuthorizationToken: authRecord.authorizationToken || undefined,
+        }
       );
 
       // Record approved spend in policy tracker if payment was executed

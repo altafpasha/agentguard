@@ -194,6 +194,11 @@ export interface IPayPalSandboxAdapter {
   executePayment(
     request: PaymentOrderRequest,
     requestId: string,
-    preApprovedOrderId?: string
+    optionsOrOrderId?:
+      | string
+      | {
+          preApprovedOrderId?: string;
+          serverAuthorizationToken?: string;
+        }
   ): Promise<PaymentExecutionResult>;
 }

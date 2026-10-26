@@ -10,14 +10,17 @@ import { PayPalClient } from './paypal-client';
 import { PaymentOrderRequest } from '../common/types';
 import { PaymentExecutionNotEnabledError } from '../common/errors';
 import { PayPalReconciliationError } from './errors';
+import { AuthorizationEngine } from '../policy/authorization-engine';
 
 export class PayPalSandboxAdapter implements IPayPalSandboxAdapter {
   private client: IPayPalClient;
   private allowLiveExecution: boolean;
+  private authorizationEngine?: AuthorizationEngine;
 
   constructor(
     configOrClient: PayPalConfig | IPayPalClient,
-    allowLiveExecution = false
+    allowLiveExecution = false,
+    authorizationEngine?: AuthorizationEngine
   ) {
     if ('createOrder' in configOrClient && typeof configOrClient.createOrder === 'function') {
       this.client = configOrClient;
@@ -25,6 +28,7 @@ export class PayPalSandboxAdapter implements IPayPalSandboxAdapter {
       this.client = new PayPalClient(configOrClient as PayPalConfig);
     }
     this.allowLiveExecution = allowLiveExecution;
+    this.authorizationEngine = authorizationEngine;
   }
 
   /**
@@ -98,15 +102,33 @@ export class PayPalSandboxAdapter implements IPayPalSandboxAdapter {
    *
    * STRICT INTEGRITY & SEPARATION RULES:
    * 1. Never capture merely because an AI agent requests it.
-   * 2. When live execution is disabled, throw PaymentExecutionNotEnabledError.
-   * 3. Reconciles state before executing, and prevents blind retries on timeout.
+   * 2. Requires a server-issued authorization for the exact transaction.
+   * 3. Never trust or use client-provided "approved": true as authorization.
+   * 4. When live execution is disabled, throw PaymentExecutionNotEnabledError.
+   * 5. Reconciles state before executing, and prevents blind retries on timeout.
    */
   public async executePayment(
     request: PaymentOrderRequest,
     requestId: string,
-    preApprovedOrderId?: string
+    optionsOrOrderId?:
+      | string
+      | {
+          preApprovedOrderId?: string;
+          serverAuthorizationToken?: string;
+        }
   ): Promise<PaymentExecutionResult> {
     const timestamp = new Date().toISOString();
+
+    // Parse options
+    let preApprovedOrderId: string | undefined;
+    let serverAuthorizationToken: string | undefined;
+
+    if (typeof optionsOrOrderId === 'string') {
+      preApprovedOrderId = optionsOrOrderId;
+    } else if (optionsOrOrderId) {
+      preApprovedOrderId = optionsOrOrderId.preApprovedOrderId;
+      serverAuthorizationToken = optionsOrOrderId.serverAuthorizationToken;
+    }
 
     // 1. Guard check: foundation phase execution flag
     if (!this.allowLiveExecution) {
@@ -130,8 +152,54 @@ export class PayPalSandboxAdapter implements IPayPalSandboxAdapter {
       };
     }
 
+    // 3. Verify Server-Issued Authorization (Hard Invariant: Never trust client-provided approval)
+    if (this.authorizationEngine) {
+      // Disregard any client-provided approval status
+      if (!serverAuthorizationToken) {
+        return {
+          executed: false,
+          status: 'FAILED',
+          message:
+            'Unauthorized payment execution: missing server-issued authorization token for this transaction.',
+          error: 'MISSING_SERVER_AUTHORIZATION',
+          requestId,
+          agentId: request.agentId,
+          amount: request.amount,
+          currency: request.currency,
+          recipientEmail: request.recipient.email,
+          executionTimestamp: timestamp,
+        };
+      }
+
+      const verification = await this.authorizationEngine.verifyAndMarkExecuted(
+        requestId,
+        serverAuthorizationToken,
+        {
+          agentId: request.agentId,
+          amount: request.amount,
+          currency: request.currency,
+          merchantEmail: request.recipient.email,
+        }
+      );
+
+      if (!verification.valid) {
+        return {
+          executed: false,
+          status: 'FAILED',
+          message: `Unauthorized payment execution: ${verification.reason}`,
+          error: 'INVALID_SERVER_AUTHORIZATION',
+          requestId,
+          agentId: request.agentId,
+          amount: request.amount,
+          currency: request.currency,
+          recipientEmail: request.recipient.email,
+          executionTimestamp: timestamp,
+        };
+      }
+    }
+
     try {
-      // 3. If pre-approved order ID is provided, reconcile and capture it
+      // 4. If pre-approved order ID is provided, reconcile and capture it
       if (preApprovedOrderId) {
         // Reconcile order details before capture
         const reconciliation = await this.client.reconcileOrder(preApprovedOrderId, {
@@ -191,7 +259,7 @@ export class PayPalSandboxAdapter implements IPayPalSandboxAdapter {
         };
       }
 
-      // 4. If no pre-approved order ID, create the sandbox order resource
+      // 5. If no pre-approved order ID, create the sandbox order resource
       const order = await this.client.createOrder({
         requestId,
         purchaseData: {
@@ -234,5 +302,9 @@ export class PayPalSandboxAdapter implements IPayPalSandboxAdapter {
         error: err instanceof Error ? err.message : String(err),
       };
     }
+  }
+
+  public setAuthorizationEngine(authorizationEngine: AuthorizationEngine): void {
+    this.authorizationEngine = authorizationEngine;
   }
 }

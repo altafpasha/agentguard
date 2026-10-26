@@ -66,7 +66,8 @@ export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
         apiBaseUrl: config.PAYPAL_API_BASE_URL,
         timeoutMs: config.PAYPAL_TIMEOUT_MS,
       },
-      config.PAYPAL_ALLOW_LIVE_EXECUTION
+      config.PAYPAL_ALLOW_LIVE_EXECUTION,
+      policyEngine.getAuthorizationEngine()
     );
 
   // Centralized Error Handler
