@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { AuthorizationEngine } from '../../src/policy/authorization-engine';
 import { MemoryPolicyStore } from '../../src/policy/policy-store';
+import { MemoryApprovalStore } from '../../src/approval/approval-store';
 import { PolicyDefinition, AuthorizationRequest } from '../../src/policy/types';
 import { parseMoneyToCents } from '../../src/policy/money';
 import { PayPalSandboxAdapter } from '../../src/payment/paypal-sandbox-adapter';
@@ -150,11 +151,40 @@ describe('Deterministic Transaction Authorization Engine', () => {
     expect(decision.violations).toContain('HOLD_PENDING_APPROVAL');
     expect(decision.reason).toContain('Payment execution is prohibited pending human approval');
 
-    // When valid approval token is provided, it is ALLOWED
+    // When valid server-issued approval token is provided, it is ALLOWED
+    const approvalStore = new MemoryApprovalStore();
+    engine.setApprovalStore(approvalStore);
+
     const approvedRequest = createRequest({
       amount: 35.0,
       humanApprovalToken: 'human-approval-token-verified-12345',
     });
+
+    await approvalStore.savePendingApproval({
+      id: 'appr-unit-test-123',
+      requestId: approvedRequest.requestId,
+      agentId: approvedRequest.agentId,
+      policyId: basePolicy.policyId,
+      policyVersion: basePolicy.version,
+      tool: approvedRequest.tool,
+      operation: approvedRequest.operation,
+      amountCents: 3500n,
+      amountFormatted: '35.00',
+      currency: 'USD',
+      merchant: 'vendor@trusted.com',
+      description: 'Test approval',
+      riskScore: 0,
+      riskCategory: 'LOW',
+      riskReasons: [],
+      suspiciousSpans: [],
+      transactionDigest: 'unit-test-digest',
+      status: 'APPROVED',
+      isConsumed: false,
+      serverAuthorizationToken: 'human-approval-token-verified-12345',
+      expiresAt: new Date(Date.now() + 60000).toISOString(),
+      createdAt: new Date().toISOString(),
+    });
+
     const approvedDecision = await engine.authorize(approvedRequest);
     expect(approvedDecision.decision).toBe('ALLOW');
     expect(approvedDecision.authorizationToken).toBeDefined();

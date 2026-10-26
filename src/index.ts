@@ -1,20 +1,29 @@
 import { buildApp } from './app';
 import { getConfig, getSanitizedConfig } from './config';
 import { PostgresAuditRepository } from './audit';
+import { MemoryAuditRepository } from './audit/memory-audit-repo';
 
 async function main(): Promise<void> {
   const config = getConfig();
 
-  // Initialize Postgres Audit Repository
-  const auditRepo = new PostgresAuditRepository(config.DATABASE_URL);
+  const isMemory =
+    config.DATABASE_URL.startsWith('memory:') ||
+    config.DATABASE_URL === 'memory';
+
+  // Initialize Audit Repository (Memory or Postgres)
+  const auditRepo = isMemory
+    ? new MemoryAuditRepository()
+    : new PostgresAuditRepository(config.DATABASE_URL);
 
   // Attempt database schema initialization (non-blocking for startup resilience)
-  try {
-    await auditRepo.initialize();
-  } catch (err) {
-    // If Postgres is not yet reachable during container startup, log warning
-    console.warn('[AgentGuard DB Warning] Could not connect to PostgreSQL on startup:', (err as Error).message);
-    console.warn('[AgentGuard DB Warning] Gateway will start; database connectivity checked via /health/ready');
+  if (!isMemory) {
+    try {
+      await (auditRepo as PostgresAuditRepository).initialize();
+    } catch (err) {
+      // If Postgres is not yet reachable during container startup, log warning
+      console.warn('[AgentGuard DB Warning] Could not connect to PostgreSQL on startup:', (err as Error).message);
+      console.warn('[AgentGuard DB Warning] Gateway will start; database connectivity checked via /health/ready');
+    }
   }
 
   const app = buildApp({ config, auditRepo });

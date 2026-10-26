@@ -4,6 +4,7 @@ import { PolicyEngine } from '../policy';
 import { IPayPalSandboxAdapter } from '../payment';
 import { IAuditRepository } from '../audit';
 import { HumanApprovalService } from '../approval/service';
+import { PendingApprovalRecord } from '../approval/types';
 import {
   paymentInitiateRequestSchema,
   createOrderRequestSchema,
@@ -14,6 +15,7 @@ import {
   InjectionDetectedError,
   PolicyViolationError,
   HumanApprovalRequiredError,
+  ConflictError,
 } from '../common/errors';
 
 export interface PaymentRouteOptions {
@@ -231,6 +233,41 @@ export const paymentRoutes: FastifyPluginAsync<PaymentRouteOptions> = async (
       });
     }
 
+    // Pre-validate human approval token if supplied
+    let approvedCapturePendingRecord: PendingApprovalRecord | null = null;
+    if (payload.humanApprovalToken) {
+      if (!approvalService) {
+        throw new PolicyViolationError('Human approval service is unavailable.');
+      }
+      const pendingRecord = await approvalService.getStore().getPendingApprovalByToken(payload.humanApprovalToken);
+      if (!pendingRecord) {
+        throw new PolicyViolationError('Invalid or unrecognized human approval token.');
+      }
+      if (pendingRecord.status !== 'APPROVED') {
+        throw new PolicyViolationError(`Approval token is not in APPROVED state (current status: ${pendingRecord.status}).`);
+      }
+      if (pendingRecord.isConsumed) {
+        throw new ConflictError('Single-use server authorization token has already been consumed. Replay rejected.');
+      }
+      if (pendingRecord.tokenExpiresAt && Date.now() > new Date(pendingRecord.tokenExpiresAt).getTime()) {
+        throw new PolicyViolationError('Human approval token has expired.');
+      }
+
+      // Verify parameter integrity against approval token
+      const reqAmountCents = BigInt(Math.round(payload.amount * 100));
+      if (
+        pendingRecord.amountCents !== reqAmountCents ||
+        pendingRecord.currency.toUpperCase() !== payload.currency.toUpperCase() ||
+        pendingRecord.merchant.toLowerCase() !== payload.recipient.email.toLowerCase() ||
+        pendingRecord.agentId !== payload.agentId
+      ) {
+        throw new PolicyViolationError(
+          'Transaction parameter tampering detected: amount, currency, or merchant does not match human approval token.'
+        );
+      }
+      approvedCapturePendingRecord = pendingRecord;
+    }
+
     // 2. Deterministic Policy Authorization
     const authRecord = await policyEngine.authorize({
       requestId,
@@ -301,6 +338,19 @@ export const paymentRoutes: FastifyPluginAsync<PaymentRouteOptions> = async (
     }
 
     // 3. Authorized -> Proceed to Execute Payment with server-issued authorization token
+    if (payload.humanApprovalToken && approvalService) {
+      await approvalService.consumeAuthorization({
+        serverAuthorizationToken: payload.humanApprovalToken,
+        requestId: approvedCapturePendingRecord?.requestId ?? requestId,
+        agentId: payload.agentId,
+        tool: approvedCapturePendingRecord?.tool ?? 'paypal_payment',
+        operation: approvedCapturePendingRecord?.operation ?? 'capture_payment',
+        amountCents: BigInt(Math.round(payload.amount * 100)),
+        currency: payload.currency,
+        merchant: payload.recipient.email,
+      });
+    }
+
     const paymentResult = await paymentAdapter.executePayment(
       {
         agentId: payload.agentId,
@@ -333,7 +383,12 @@ export const paymentRoutes: FastifyPluginAsync<PaymentRouteOptions> = async (
       },
     });
 
-    const statusCode = paymentResult.executed ? 200 : 502;
+    const statusCode = paymentResult.executed
+      ? 200
+      : paymentResult.error === 'INVALID_SERVER_AUTHORIZATION' ||
+        paymentResult.error === 'MISSING_SERVER_AUTHORIZATION'
+      ? 403
+      : 502;
     return reply.status(statusCode).send({
       ...paymentResult,
       securityVerification: {
@@ -403,6 +458,41 @@ export const paymentRoutes: FastifyPluginAsync<PaymentRouteOptions> = async (
       riskScore: scanResult.riskScore,
     });
 
+    // If a human approval token is provided, validate its presence and status in the approval store
+    let approvedInitiatePendingRecord: PendingApprovalRecord | null = null;
+    if (payload.humanApprovalToken) {
+      if (!approvalService) {
+        throw new PolicyViolationError('Human approval service is unavailable.');
+      }
+      const pendingRecord = await approvalService.getStore().getPendingApprovalByToken(payload.humanApprovalToken);
+      if (!pendingRecord) {
+        throw new PolicyViolationError('Invalid or unrecognized human approval token.');
+      }
+      if (pendingRecord.status !== 'APPROVED') {
+        throw new PolicyViolationError(`Approval token is not in APPROVED state (current status: ${pendingRecord.status}).`);
+      }
+      if (pendingRecord.isConsumed) {
+        throw new ConflictError('Single-use server authorization token has already been consumed. Replay rejected.');
+      }
+      if (pendingRecord.tokenExpiresAt && Date.now() > new Date(pendingRecord.tokenExpiresAt).getTime()) {
+        throw new PolicyViolationError('Human approval token has expired.');
+      }
+
+      // Verify immutable parameters match the requested transaction
+      const reqAmountCents = BigInt(Math.round(payload.amount * 100));
+      if (
+        pendingRecord.amountCents !== reqAmountCents ||
+        pendingRecord.currency.toUpperCase() !== payload.currency.toUpperCase() ||
+        pendingRecord.merchant.toLowerCase() !== payload.recipient.email.toLowerCase() ||
+        pendingRecord.agentId !== payload.agentId
+      ) {
+        throw new PolicyViolationError(
+          'Transaction parameter tampering detected: amount, currency, or merchant does not match human approval token.'
+        );
+      }
+      approvedInitiatePendingRecord = pendingRecord;
+    }
+
     // 4. Deterministic Policy Engine Evaluation (Strict Authority)
     const authRecord = await policyEngine.authorize({
       requestId,
@@ -415,6 +505,35 @@ export const paymentRoutes: FastifyPluginAsync<PaymentRouteOptions> = async (
       description: payload.description,
       humanApprovalToken: payload.humanApprovalToken,
     });
+
+    // Idempotent replay: if this request was already executed, return cached successful result
+    if (authRecord.isExecuted) {
+      const priorEvents = await auditRepo.getEventsByRequestId(requestId);
+      const completionEvent = priorEvents.find(
+        (e) => e.eventType === 'PAYMENT_COMPLETED' || e.eventType === 'ORDER_CREATED'
+      );
+      if (completionEvent) {
+        return reply.status(200).send({
+          executed: true,
+          status: (completionEvent.payloadSummary?.status as string) || 'PAYPAL_ORDER_CREATED',
+          message: 'Idempotent request: returning previous execution result.',
+          requestId,
+          agentId: payload.agentId,
+          amount: payload.amount,
+          currency: payload.currency,
+          recipientEmail: payload.recipient.email,
+          paypalOrderId:
+            (completionEvent.payloadSummary?.paypalOrderId as string) ||
+            (completionEvent.payloadSummary?.orderId as string) ||
+            completionEvent.paypalReference,
+          idempotentReplay: true,
+          securityVerification: {
+            injectionScan: 'PASSED',
+            policyDecision: 'ALLOW',
+          },
+        });
+      }
+    }
 
     if (authRecord.decision === 'BLOCK') {
       await auditRepo.recordEvent({
@@ -517,6 +636,20 @@ export const paymentRoutes: FastifyPluginAsync<PaymentRouteOptions> = async (
     });
 
     try {
+      // Atomically consume human approval token on payment execution
+      if (payload.humanApprovalToken && approvalService) {
+        await approvalService.consumeAuthorization({
+          serverAuthorizationToken: payload.humanApprovalToken,
+          requestId: approvedInitiatePendingRecord?.requestId ?? requestId,
+          agentId: payload.agentId,
+          tool: approvedInitiatePendingRecord?.tool ?? 'paypal_payment',
+          operation: approvedInitiatePendingRecord?.operation ?? (payload.orderId ? 'capture_payment' : 'create_order'),
+          amountCents: BigInt(Math.round(payload.amount * 100)),
+          currency: payload.currency,
+          merchant: payload.recipient.email,
+        });
+      }
+
       const paymentResult = await paymentAdapter.executePayment(
         {
           agentId: payload.agentId,
@@ -530,7 +663,7 @@ export const paymentRoutes: FastifyPluginAsync<PaymentRouteOptions> = async (
         requestId,
         {
           preApprovedOrderId: payload.orderId,
-          serverAuthorizationToken: authRecord.authorizationToken || undefined,
+          serverAuthorizationToken: payload.humanApprovalToken || authRecord.authorizationToken || undefined,
         }
       );
 

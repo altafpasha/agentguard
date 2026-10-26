@@ -1,0 +1,107 @@
+@import "tailwindcss";
+
+:root {
+  --background: #111215;
+  --foreground: #f4f4f5;
+  --card: #1a1c22;
+  --card-hover: #20232a;
+  --card-border: rgba(255, 255, 255, 0.07);
+  --lime: #d7ff70;
+  --lime-dark: #111a00;
+  --lime-text: #0e1400;
+  --purple: #8c7cff;
+  --muted: #8e929c;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Custom hatching diagonal stripes as seen in reference screenshot */
+.hatch-subtle {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.07),
+    rgba(255, 255, 255, 0.07) 3px,
+    transparent 3px,
+    transparent 10px
+  );
+}
+
+.hatch-medium {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.14),
+    rgba(255, 255, 255, 0.14) 3px,
+    transparent 3px,
+    transparent 8px
+  );
+}
+
+.hatch-lime {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(215, 255, 112, 0.35),
+    rgba(215, 255, 112, 0.35) 3px,
+    transparent 3px,
+    transparent 7px
+  );
+}
+
+.hatch-purple {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(140, 124, 255, 0.4),
+    rgba(140, 124, 255, 0.4) 3px,
+    transparent 3px,
+    transparent 7px
+  );
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #111215;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #272a33;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #393e4b;
+}
+
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Interactive button tap feedback */
+.btn-press {
+  transition: transform 0.1s ease, background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.btn-press:active {
+  transform: scale(0.97);
+}
+
+.card-surface {
+  background-color: #1A1C22;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 22px;
+  box-shadow: 0 4px 24px -2px rgba(0, 0, 0, 0.4);
+}
+

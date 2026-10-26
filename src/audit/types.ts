@@ -48,6 +48,7 @@ export interface IAuditRepository {
   recordEvent(event: AuditRecord): Promise<AuditRecord>;
   getEventsByRequestId(requestId: string): Promise<AuditRecord[]>;
   getEventsByAgentId(agentId: string, limit?: number): Promise<AuditRecord[]>;
+  getAllEvents(limit?: number): Promise<AuditRecord[]>;
   healthCheck(): Promise<boolean>;
   close(): Promise<void>;
 }

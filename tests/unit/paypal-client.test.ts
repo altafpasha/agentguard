@@ -220,7 +220,7 @@ describe('PayPalClient Module (Sandbox REST API)', () => {
     });
 
     it('creates sandbox order using validated purchase data and PayPal-Request-Id header', async () => {
-      let capturedHeaders: HeadersInit | undefined;
+      let capturedHeaders: Record<string, string> | undefined;
       let capturedBody: string | undefined;
 
       const mockFetch = vi

@@ -95,7 +95,6 @@ describe('AgentGuard Human Approval Workflow & Durable Audit Log', () => {
       reconcileOrder: vi.fn(),
       isConfigured: () => true,
       getAccessToken: vi.fn(),
-      verifyCredentials: vi.fn(),
     };
 
     const adapter = new PayPalSandboxAdapter(
@@ -404,7 +403,6 @@ describe('AgentGuard Human Approval Workflow & Durable Audit Log', () => {
       }),
       isConfigured: () => true,
       getAccessToken: vi.fn(),
-      verifyCredentials: vi.fn(),
     };
 
     const adapter = new PayPalSandboxAdapter(
@@ -498,7 +496,7 @@ describe('AgentGuard Human Approval Workflow & Durable Audit Log', () => {
     const retrievedEvents = await repo2.getEventsByRequestId(testRequestId);
 
     expect(retrievedEvents).toHaveLength(1);
-    const persisted = retrievedEvents[0];
+    const persisted = retrievedEvents[0]!;
 
     // Assert all audit contract fields survive restart intact
     expect(persisted.requestId).toBe(testRequestId);

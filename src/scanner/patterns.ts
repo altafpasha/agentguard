@@ -7,8 +7,8 @@ export const INJECTION_RULES: ScannerRule[] = [
     name: 'Instruction Override',
     category: 'INSTRUCTION_OVERRIDE',
     severity: 'CRITICAL',
-    description: 'Attempts to override, bypass, or disregard previous system instructions or safety constraints.',
-    regex: /(?:ignore|disregard|forget|bypass|override|drop)\s+(?:all\s+)?(?:previous|prior|above|existing|system)?\s*(?:instructions|rules|prompts|commands|guidelines|constraints|safety\s+checks)/i,
+    description: 'Attempt to force the agent to ignore, disregard, or bypass prior instructions or constraints.',
+    regex: /(?:ignore|disregard|forget|bypass|override|drop)\s+(?:all\s+)?(?:previous|prior|above|existing|system|buyer)?\s*(?:\w+\s+)?(?:instructions|rules|prompts|commands|guidelines|constraints|safety\s+checks|limits)/i,
     weight: 0.85,
   },
   {
@@ -88,7 +88,7 @@ export const INJECTION_RULES: ScannerRule[] = [
     category: 'FINANCIAL_HIJACKING',
     severity: 'HIGH',
     description: 'Instructs the agent to send funds to an alternate or attacker-controlled address silently.',
-    regex: /(?:send|transfer|forward)\s+(?:the\s+)?(?:funds|money|payment|balance)\s+(?:instead\s+to|silently\s+to|secretly\s+to|to\s+my\s+personal\s+paypal)/i,
+    regex: /(?:send|transfer|forward|redirect|divert)\s+(?:the\s+)?(?:funds|money|payment|balance|transaction)?\s*(?:instead\s+to|silently\s+to|secretly\s+to|to\s+my\s+personal\s+paypal|to\s+(?:an?\s+)?(?:alternate|offshore|another|attacker|personal|unauthorized|new)\s+(?:account|address|payee|wallet|recipient|email)|to\s+\S+@\S+)/i,
     weight: 0.75,
   },
 

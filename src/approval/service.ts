@@ -212,7 +212,9 @@ export class HumanApprovalService {
       payloadSummary: {
         approvalId: approvedRecord.id,
         reviewedBy: reviewerUsername,
-        serverAuthorizationToken: approvedRecord.serverAuthorizationToken,
+        serverAuthorizationToken: approvedRecord.serverAuthorizationToken
+          ? `${approvedRecord.serverAuthorizationToken.slice(0, 8)}...[REDACTED]`
+          : undefined,
         tokenExpiresAt: approvedRecord.tokenExpiresAt,
         transactionDigest: approvedRecord.transactionDigest,
       },

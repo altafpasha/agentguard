@@ -143,8 +143,11 @@ describe('OpenRouter AI Provider Module', () => {
     it('parses valid JSON response from LLM', async () => {
       vi.spyOn(client, 'createChatCompletion').mockResolvedValueOnce({
         id: 'gen-456',
+        model: 'anthropic/claude-3.5-sonnet',
         choices: [
           {
+            index: 0,
+            finish_reason: 'stop',
             message: {
               role: 'assistant',
               content:

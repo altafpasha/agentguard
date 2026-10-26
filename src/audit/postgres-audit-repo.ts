@@ -154,6 +154,17 @@ export class PostgresAuditRepository implements IAuditRepository {
     return result.rows.map((row) => this.mapRow(row));
   }
 
+  public async getAllEvents(limit: number = 100): Promise<AuditRecord[]> {
+    const query = `
+      SELECT *
+      FROM audit_events
+      ORDER BY created_at DESC
+      LIMIT $1;
+    `;
+    const result = await this.pool.query(query, [limit]);
+    return result.rows.map((row) => this.mapRow(row));
+  }
+
   public async healthCheck(): Promise<boolean> {
     try {
       const result = await this.pool.query('SELECT 1;');

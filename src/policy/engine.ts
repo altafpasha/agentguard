@@ -40,12 +40,15 @@ export class InMemorySpendTracker implements SpendTracker {
   }
 }
 
+import { IApprovalStore } from '../approval/types';
+
 export interface PolicyEngineOptions {
   rules?: IPolicyRule[];
   spendTracker?: SpendTracker;
   policyStore?: IPolicyStore;
   authorizationEngine?: AuthorizationEngine;
   defaultPolicy?: PolicyDefinition;
+  approvalStore?: IApprovalStore;
 }
 
 export class PolicyEngine {
@@ -66,6 +69,7 @@ export class PolicyEngine {
       new AuthorizationEngine({
         store: this.policyStore,
         defaultPolicy: this.defaultPolicy,
+        approvalStore: options.approvalStore,
       });
 
     if (this.defaultPolicy) {
@@ -228,5 +232,9 @@ export class PolicyEngine {
 
   public getPolicyStore(): IPolicyStore {
     return this.policyStore;
+  }
+
+  public setApprovalStore(store: IApprovalStore): void {
+    this.authorizationEngine.setApprovalStore(store);
   }
 }

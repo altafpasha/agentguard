@@ -20,6 +20,13 @@ build/
 coverage/
 .nyc_output/
 *.lcov
+playwright-report/
+test-results/
+scenario-results.json
+
+# Next.js build artifacts
+dashboard/.next/
+dashboard/out/
 
 # Logs
 logs/

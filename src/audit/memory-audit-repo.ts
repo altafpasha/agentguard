@@ -44,7 +44,7 @@ export class MemoryAuditRepository implements IAuditRepository {
     this.events = [];
   }
 
-  public getAllEvents(): AuditRecord[] {
-    return [...this.events];
+  public async getAllEvents(limit = 100): Promise<AuditRecord[]> {
+    return this.events.slice().reverse().slice(0, limit);
   }
 }

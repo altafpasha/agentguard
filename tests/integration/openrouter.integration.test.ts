@@ -7,11 +7,12 @@ describe('OpenRouter Live Integration Test', () => {
   const config = getConfig();
   const apiKey = config.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY;
   const isRealApiKeyProvided =
+    process.env.RUN_LIVE_OPENROUTER === 'true' &&
     Boolean(apiKey) &&
     !apiKey?.includes('placeholder') &&
+    !apiKey?.includes('your-openrouter-api-key-here') &&
     apiKey !== '****' &&
-    apiKey?.startsWith('sk-or-v1-') &&
-    apiKey.length > 25;
+    apiKey?.startsWith('sk-or-v1-');
 
   const testContext: RiskAnalysisContext = {
     requestId: 'live_int_001',

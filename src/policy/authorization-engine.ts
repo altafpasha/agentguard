@@ -7,21 +7,30 @@ import {
 } from './types';
 import { formatCents, parseMoneyToCents } from './money';
 
+import { IApprovalStore } from '../approval/types';
+
 export interface AuthorizationEngineOptions {
   store: IPolicyStore;
   defaultPolicy?: PolicyDefinition;
   tokenTtlSeconds?: number;
+  approvalStore?: IApprovalStore;
 }
 
 export class AuthorizationEngine {
   private store: IPolicyStore;
   private defaultPolicy?: PolicyDefinition;
   private tokenTtlSeconds: number;
+  private approvalStore?: IApprovalStore;
 
   constructor(options: AuthorizationEngineOptions) {
     this.store = options.store;
     this.defaultPolicy = options.defaultPolicy;
     this.tokenTtlSeconds = options.tokenTtlSeconds ?? 900; // 15 minutes default
+    this.approvalStore = options.approvalStore;
+  }
+
+  public setApprovalStore(approvalStore: IApprovalStore): void {
+    this.approvalStore = approvalStore;
   }
 
   public getDefaultPolicy(): PolicyDefinition | undefined {
@@ -46,8 +55,13 @@ export class AuthorizationEngine {
     // 1. Idempotency Check
     const existingDecision = await this.store.getDecisionByRequestId(request.requestId);
     if (existingDecision) {
-      // Invariant: "Ensure a previously blocked action cannot become executable through a retry."
-      return existingDecision;
+      // Allow held transactions to proceed when a valid human approval token is presented
+      if (existingDecision.decision === 'HOLD' && request.humanApprovalToken) {
+        // Fall through to evaluate humanApprovalToken and issue authorization
+      } else {
+        // Invariant: "Ensure a previously blocked action cannot become executable through a retry."
+        return existingDecision;
+      }
     }
 
     // 2. Validate Money Values without floating-point errors
@@ -239,12 +253,33 @@ export class AuthorizationEngine {
 
     // 11. Mandatory Human Approval Threshold Check
     if (amountCents >= policy.approvalThresholdCents) {
-      // Check if a valid human approval token was provided
       const trimmedToken = request.humanApprovalToken?.trim();
-      const hasValidToken =
-        Boolean(trimmedToken && trimmedToken.length >= 8 && !trimmedToken.includes('fake'));
+      let isTokenValid = false;
+      let tokenRejectionReason = `MANDATORY_APPROVAL_REQUIRED: Amount ${formattedAmount} ${normalizedCurrency} meets or exceeds approval threshold of ${formatCents(policy.approvalThresholdCents)} ${normalizedCurrency}. Payment execution is prohibited pending human approval.`;
 
-      if (!hasValidToken) {
+      if (trimmedToken && this.approvalStore) {
+        const pendingRecord = await this.approvalStore.getPendingApprovalByToken(trimmedToken);
+        if (!pendingRecord) {
+          tokenRejectionReason = 'Invalid, unrecognized, or forged human approval token.';
+        } else if (pendingRecord.status !== 'APPROVED') {
+          tokenRejectionReason = `Approval token is not in APPROVED state (current status: ${pendingRecord.status}).`;
+        } else if (pendingRecord.isConsumed) {
+          tokenRejectionReason = 'Single-use human approval token has already been consumed.';
+        } else if (pendingRecord.tokenExpiresAt && Date.now() > new Date(pendingRecord.tokenExpiresAt).getTime()) {
+          tokenRejectionReason = 'Human approval token has expired.';
+        } else if (
+          pendingRecord.agentId !== request.agentId ||
+          pendingRecord.amountCents !== amountCents ||
+          pendingRecord.currency.toUpperCase() !== normalizedCurrency ||
+          pendingRecord.merchant.toLowerCase() !== merchantIdentifier
+        ) {
+          tokenRejectionReason = 'Transaction parameter tampering detected: amount, currency, merchant, or agent does not match approval token.';
+        } else {
+          isTokenValid = true;
+        }
+      }
+
+      if (!isTokenValid) {
         const holdRecord: AuthorizationDecisionRecord = {
           requestId: request.requestId,
           agentId: request.agentId,
@@ -257,7 +292,7 @@ export class AuthorizationEngine {
           currency: normalizedCurrency,
           merchant: merchantIdentifier,
           decision: 'HOLD',
-          reason: `MANDATORY_APPROVAL_REQUIRED: Amount ${formattedAmount} ${normalizedCurrency} meets or exceeds approval threshold of ${formatCents(policy.approvalThresholdCents)} ${normalizedCurrency}. Payment execution is prohibited pending human approval.`,
+          reason: tokenRejectionReason,
           violations: ['HOLD_PENDING_APPROVAL'],
           isExecuted: false,
           expiresAt: new Date(Date.now() + this.tokenTtlSeconds * 1000).toISOString(),
@@ -269,7 +304,7 @@ export class AuthorizationEngine {
     }
 
     // 12. Policy Approved -> Issue Server Authorization Token
-    const authorizationToken = `auth_${randomUUID().replace(/-/g, '')}`;
+    const authorizationToken = request.humanApprovalToken || `auth_${randomUUID().replace(/-/g, '')}`;
     const expiresAt = new Date(Date.now() + this.tokenTtlSeconds * 1000).toISOString();
 
     // Record velocity event

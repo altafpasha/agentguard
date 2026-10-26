@@ -18,8 +18,10 @@ import {
   approvalRoutes,
 } from './routes';
 import { IRiskAnalyzerProvider, OpenRouterRiskAnalyzer } from './ai';
-import { IReviewerAuthService, PostgresReviewerAuthService } from './auth';
-import { HumanApprovalService, PostgresApprovalStore } from './approval';
+import { IReviewerAuthService, PostgresReviewerAuthService, MemoryReviewerAuthService } from './auth';
+import { HumanApprovalService, PostgresApprovalStore, MemoryApprovalStore } from './approval';
+import { MemoryAuditRepository } from './audit/memory-audit-repo';
+import { seedInitialData } from './common/seed';
 
 export interface AppDependencies {
   config?: EnvConfig;
@@ -36,6 +38,7 @@ export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
   const config = dependencies.config ?? getConfig();
 
   const app = fastify({
+    bodyLimit: 524288, // 512 KB payload limit (mitigates memory exhaustion and payload abuse)
     logger: getLoggerOptions(config.LOG_LEVEL),
     genReqId: (req) => {
       const headerReqId = req.headers['x-request-id'];
@@ -50,13 +53,22 @@ export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
   app.register(cors, {
     origin: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'X-Reviewer-Token'],
     exposedHeaders: ['X-Request-Id'],
   });
 
-  // Always echo x-request-id in response headers
+  // Security Headers and Request ID Echo Hook
   app.addHook('onSend', async (request, reply) => {
     reply.header('x-request-id', request.id);
+    reply.header('x-content-type-options', 'nosniff');
+    reply.header('x-frame-options', 'DENY');
+    reply.header('x-xss-protection', '1; mode=block');
+    reply.header('referrer-policy', 'strict-origin-when-cross-origin');
+
+    if (request.url.startsWith('/api/')) {
+      reply.header('cache-control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      reply.header('pragma', 'no-cache');
+    }
   });
 
   // Initialize service dependencies
@@ -65,16 +77,29 @@ export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
   const auditRepo =
     dependencies.auditRepo ?? new PostgresAuditRepository(config.DATABASE_URL);
 
+  const isTestOrMemory =
+    auditRepo instanceof MemoryAuditRepository ||
+    config.NODE_ENV === 'test' ||
+    config.DATABASE_URL.startsWith('memory:');
+
   const authService =
-    dependencies.authService ?? new PostgresReviewerAuthService(config.DATABASE_URL);
+    dependencies.authService ??
+    (isTestOrMemory
+      ? new MemoryReviewerAuthService()
+      : new PostgresReviewerAuthService(config.DATABASE_URL));
 
   const approvalService =
     dependencies.approvalService ??
     new HumanApprovalService({
-      store: new PostgresApprovalStore(config.DATABASE_URL),
+      store: isTestOrMemory
+        ? new MemoryApprovalStore()
+        : new PostgresApprovalStore(config.DATABASE_URL),
       policyEngine,
       auditRepo,
     });
+
+  // Wire approval store to policyEngine so threshold evaluation validates tokens directly
+  policyEngine.setApprovalStore(approvalService.getStore());
 
   const paymentAdapter =
     dependencies.paymentAdapter ??
@@ -102,6 +127,11 @@ export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
       maxContextChars: config.OPENROUTER_MAX_CONTEXT_CHARS,
       rateLimitRpm: config.OPENROUTER_RATE_LIMIT_RPM,
     });
+
+  // Seed demo data for development and live dashboard when not running vitest
+  if (config.NODE_ENV !== 'test') {
+    void seedInitialData(auditRepo, approvalService, authService).catch(() => {});
+  }
 
   // Centralized Error Handler
   app.setErrorHandler((error, request, reply) => {
@@ -173,7 +203,7 @@ export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
   app.register(scanRoutes, { scanner, auditRepo });
   app.register(authRoutes, { authService });
   app.register(approvalRoutes, { approvalService, authService });
-  app.register(policyRoutes, { policyEngine, auditRepo, aiRiskAnalyzer, approvalService });
+  app.register(policyRoutes, { policyEngine, auditRepo, aiRiskAnalyzer, approvalService, authService });
   app.register(paymentRoutes, { scanner, policyEngine, paymentAdapter, auditRepo, approvalService });
   app.register(auditRoutes, { auditRepo });
 
