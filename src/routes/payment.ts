@@ -3,6 +3,7 @@ import { InjectionScanner } from '../scanner';
 import { PolicyEngine } from '../policy';
 import { IPayPalSandboxAdapter } from '../payment';
 import { IAuditRepository } from '../audit';
+import { HumanApprovalService } from '../approval/service';
 import {
   paymentInitiateRequestSchema,
   createOrderRequestSchema,
@@ -20,13 +21,14 @@ export interface PaymentRouteOptions {
   policyEngine: PolicyEngine;
   paymentAdapter: IPayPalSandboxAdapter;
   auditRepo: IAuditRepository;
+  approvalService?: HumanApprovalService;
 }
 
 export const paymentRoutes: FastifyPluginAsync<PaymentRouteOptions> = async (
   fastify: FastifyInstance,
   options: PaymentRouteOptions
 ) => {
-  const { scanner, policyEngine, paymentAdapter, auditRepo } = options;
+  const { scanner, policyEngine, paymentAdapter, auditRepo, approvalService } = options;
 
   /**
    * 1. Create Sandbox Order (Separated from payment execution)
@@ -260,18 +262,41 @@ export const paymentRoutes: FastifyPluginAsync<PaymentRouteOptions> = async (
     }
 
     if (authRecord.decision === 'HOLD') {
+      let pendingApprovalId: string | undefined;
+      if (approvalService) {
+        const pending = await approvalService.createPendingApproval({
+          requestId,
+          agentId: payload.agentId,
+          policyId: authRecord.policyId,
+          policyVersion: authRecord.policyVersion,
+          tool: 'paypal_payment',
+          operation: 'capture_payment',
+          amountCents: authRecord.amountCents,
+          amountFormatted: authRecord.amountFormatted,
+          currency: authRecord.currency,
+          merchant: authRecord.merchant,
+          description: payload.description || 'Order capture',
+          riskReasons: authRecord.violations,
+        });
+        pendingApprovalId = pending.id;
+      }
+
       await auditRepo.recordEvent({
         requestId,
         agentId: payload.agentId,
         eventType: 'APPROVAL_REQUIRED',
         status: 'PENDING_APPROVAL',
         policyDecision: 'HOLD',
-        payloadSummary: { violations: authRecord.violations, reason: authRecord.reason },
+        payloadSummary: {
+          violations: authRecord.violations,
+          reason: authRecord.reason,
+          approvalId: pendingApprovalId,
+        },
       });
 
       throw new HumanApprovalRequiredError(
         'Transaction exceeds automated authorization threshold. Explicit human approval token required.',
-        { violations: authRecord.violations }
+        { violations: authRecord.violations, approvalId: pendingApprovalId }
       );
     }
 
@@ -409,18 +434,41 @@ export const paymentRoutes: FastifyPluginAsync<PaymentRouteOptions> = async (
     }
 
     if (authRecord.decision === 'HOLD') {
+      let pendingApprovalId: string | undefined;
+      if (approvalService) {
+        const pending = await approvalService.createPendingApproval({
+          requestId,
+          agentId: payload.agentId,
+          policyId: authRecord.policyId,
+          policyVersion: authRecord.policyVersion,
+          tool: 'paypal_payment',
+          operation: 'capture_payment',
+          amountCents: authRecord.amountCents,
+          amountFormatted: authRecord.amountFormatted,
+          currency: authRecord.currency,
+          merchant: authRecord.merchant,
+          description: payload.description || 'Order capture',
+          riskReasons: authRecord.violations,
+        });
+        pendingApprovalId = pending.id;
+      }
+
       await auditRepo.recordEvent({
         requestId,
         agentId: payload.agentId,
         eventType: 'APPROVAL_REQUIRED',
         status: 'PENDING_APPROVAL',
         policyDecision: 'HOLD',
-        payloadSummary: { violations: authRecord.violations, reason: authRecord.reason },
+        payloadSummary: {
+          violations: authRecord.violations,
+          reason: authRecord.reason,
+          approvalId: pendingApprovalId,
+        },
       });
 
       throw new HumanApprovalRequiredError(
         'Transaction exceeds automated authorization threshold. Explicit human approval token required.',
-        { violations: authRecord.violations }
+        { violations: authRecord.violations, approvalId: pendingApprovalId }
       );
     }
 

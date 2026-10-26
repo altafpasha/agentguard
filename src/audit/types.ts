@@ -24,6 +24,17 @@ export interface AuditRecord {
   id?: string;
   requestId: string;
   agentId: string;
+  action?: string;
+  merchant?: string | null;
+  amountCents?: bigint | string | number | null;
+  amountFormatted?: string | null;
+  currency?: string | null;
+  policyVersion?: number | string | null;
+  riskResult?: Record<string, unknown> | null;
+  decision?: string | null;
+  decisionReasons?: string[] | null;
+  approvalState?: string | null;
+  paypalReference?: string | null;
   eventType: AuditEventType;
   status: AuditEventStatus;
   riskScore?: number | null;

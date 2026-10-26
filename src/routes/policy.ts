@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { PolicyEngine } from '../policy';
 import { IAuditRepository } from '../audit';
+import { HumanApprovalService } from '../approval/service';
 import { policyEvaluationRequestSchema, riskAnalysisRequestSchema } from './schemas';
 import { ValidationError } from '../common/errors';
 import { IRiskAnalyzerProvider, RiskDecisionEngine } from '../ai';
@@ -10,6 +11,7 @@ export interface PolicyRouteOptions {
   auditRepo: IAuditRepository;
   aiRiskAnalyzer?: IRiskAnalyzerProvider;
   riskDecisionEngine?: RiskDecisionEngine;
+  approvalService?: HumanApprovalService;
 }
 
 export const policyRoutes: FastifyPluginAsync<PolicyRouteOptions> = async (
@@ -21,6 +23,7 @@ export const policyRoutes: FastifyPluginAsync<PolicyRouteOptions> = async (
     auditRepo,
     aiRiskAnalyzer,
     riskDecisionEngine = new RiskDecisionEngine(),
+    approvalService,
   } = options;
 
   fastify.post('/api/v1/evaluate-policy', async (req, reply) => {
@@ -109,12 +112,32 @@ export const policyRoutes: FastifyPluginAsync<PolicyRouteOptions> = async (
     let auditEventType: 'POLICY_APPROVED' | 'POLICY_BLOCKED' | 'APPROVAL_REQUIRED' = 'POLICY_APPROVED';
     let auditStatus: 'SUCCESS' | 'BLOCKED' | 'PENDING_APPROVAL' = 'SUCCESS';
 
+    let pendingApprovalId: string | undefined;
+
     if (decisionRecord.decision === 'BLOCK') {
       auditEventType = 'POLICY_BLOCKED';
       auditStatus = 'BLOCKED';
     } else if (decisionRecord.decision === 'HOLD') {
       auditEventType = 'APPROVAL_REQUIRED';
       auditStatus = 'PENDING_APPROVAL';
+
+      if (approvalService) {
+        const pending = await approvalService.createPendingApproval({
+          requestId,
+          agentId: payload.agentId,
+          policyId: decisionRecord.policyId,
+          policyVersion: decisionRecord.policyVersion,
+          tool: decisionRecord.tool,
+          operation: decisionRecord.operation,
+          amountCents: decisionRecord.amountCents,
+          amountFormatted: decisionRecord.amountFormatted,
+          currency: decisionRecord.currency,
+          merchant: decisionRecord.merchant,
+          description: payload.description,
+          riskReasons: decisionRecord.violations,
+        });
+        pendingApprovalId = pending.id;
+      }
     }
 
     await auditRepo.recordEvent({
@@ -130,6 +153,7 @@ export const policyRoutes: FastifyPluginAsync<PolicyRouteOptions> = async (
         currency: decisionRecord.currency,
         merchant: decisionRecord.merchant,
         violations: decisionRecord.violations,
+        pendingApprovalId,
       },
       errorMessage: decisionRecord.decision === 'BLOCK' ? decisionRecord.reason : undefined,
     });
@@ -139,6 +163,7 @@ export const policyRoutes: FastifyPluginAsync<PolicyRouteOptions> = async (
     return reply.status(statusCode).send({
       ...decisionRecord,
       amountCents: decisionRecord.amountCents.toString(),
+      pendingApprovalId,
     });
   });
 

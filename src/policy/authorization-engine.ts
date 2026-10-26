@@ -24,6 +24,10 @@ export class AuthorizationEngine {
     this.tokenTtlSeconds = options.tokenTtlSeconds ?? 900; // 15 minutes default
   }
 
+  public getDefaultPolicy(): PolicyDefinition | undefined {
+    return this.defaultPolicy;
+  }
+
   /**
    * Authoritative transaction inspection and decision evaluation.
    *

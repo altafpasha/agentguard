@@ -11,16 +11,20 @@ import { PaymentOrderRequest } from '../common/types';
 import { PaymentExecutionNotEnabledError } from '../common/errors';
 import { PayPalReconciliationError } from './errors';
 import { AuthorizationEngine } from '../policy/authorization-engine';
+import { HumanApprovalService } from '../approval/service';
+import { parseMoneyToCents } from '../policy/money';
 
 export class PayPalSandboxAdapter implements IPayPalSandboxAdapter {
   private client: IPayPalClient;
   private allowLiveExecution: boolean;
   private authorizationEngine?: AuthorizationEngine;
+  private humanApprovalService?: HumanApprovalService;
 
   constructor(
     configOrClient: PayPalConfig | IPayPalClient,
     allowLiveExecution = false,
-    authorizationEngine?: AuthorizationEngine
+    authorizationEngine?: AuthorizationEngine,
+    humanApprovalService?: HumanApprovalService
   ) {
     if ('createOrder' in configOrClient && typeof configOrClient.createOrder === 'function') {
       this.client = configOrClient;
@@ -29,6 +33,7 @@ export class PayPalSandboxAdapter implements IPayPalSandboxAdapter {
     }
     this.allowLiveExecution = allowLiveExecution;
     this.authorizationEngine = authorizationEngine;
+    this.humanApprovalService = humanApprovalService;
   }
 
   /**
@@ -153,7 +158,7 @@ export class PayPalSandboxAdapter implements IPayPalSandboxAdapter {
     }
 
     // 3. Verify Server-Issued Authorization (Hard Invariant: Never trust client-provided approval)
-    if (this.authorizationEngine) {
+    if (this.humanApprovalService || this.authorizationEngine) {
       // Disregard any client-provided approval status
       if (!serverAuthorizationToken) {
         return {
@@ -171,22 +176,54 @@ export class PayPalSandboxAdapter implements IPayPalSandboxAdapter {
         };
       }
 
-      const verification = await this.authorizationEngine.verifyAndMarkExecuted(
-        requestId,
-        serverAuthorizationToken,
-        {
-          agentId: request.agentId,
-          amount: request.amount,
-          currency: request.currency,
-          merchantEmail: request.recipient.email,
-        }
-      );
+      let verified = false;
+      let failureReason = 'Invalid server authorization token.';
 
-      if (!verification.valid) {
+      // Check human approval service if configured
+      if (this.humanApprovalService) {
+        try {
+          const parsedCents = parseMoneyToCents(request.amount);
+          await this.humanApprovalService.consumeAuthorization({
+            serverAuthorizationToken,
+            requestId,
+            agentId: request.agentId,
+            tool: 'paypal_payment',
+            operation: preApprovedOrderId ? 'capture_payment' : 'create_order',
+            amountCents: parsedCents,
+            currency: request.currency,
+            merchant: request.recipient.email,
+          });
+          verified = true;
+        } catch (err: unknown) {
+          failureReason = err instanceof Error ? err.message : String(err);
+        }
+      }
+
+      // If not verified via human approval, verify via authorization engine
+      if (!verified && this.authorizationEngine) {
+        const verification = await this.authorizationEngine.verifyAndMarkExecuted(
+          requestId,
+          serverAuthorizationToken,
+          {
+            agentId: request.agentId,
+            amount: request.amount,
+            currency: request.currency,
+            merchantEmail: request.recipient.email,
+          }
+        );
+
+        if (verification.valid) {
+          verified = true;
+        } else {
+          failureReason = verification.reason || failureReason;
+        }
+      }
+
+      if (!verified) {
         return {
           executed: false,
           status: 'FAILED',
-          message: `Unauthorized payment execution: ${verification.reason}`,
+          message: `Unauthorized payment execution: ${failureReason}`,
           error: 'INVALID_SERVER_AUTHORIZATION',
           requestId,
           agentId: request.agentId,

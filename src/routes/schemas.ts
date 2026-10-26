@@ -76,9 +76,20 @@ export const riskAnalysisRequestSchema = z.object({
   requireRiskAnalysis: z.boolean().default(false),
 });
 
+export const loginRequestSchema = z.object({
+  username: z.string().min(1, 'username is required'),
+  password: z.string().min(1, 'password is required'),
+});
+
+export const rejectApprovalRequestSchema = z.object({
+  reason: z.string().min(1, 'rejection reason is required'),
+});
+
 export type ScanRequestBody = z.infer<typeof scanRequestSchema>;
 export type PolicyEvaluationRequestBody = z.infer<typeof policyEvaluationRequestSchema>;
 export type PaymentInitiateRequestBody = z.infer<typeof paymentInitiateRequestSchema>;
 export type CreateOrderRequestBody = z.infer<typeof createOrderRequestSchema>;
 export type CaptureOrderRequestBody = z.infer<typeof captureOrderRequestSchema>;
 export type RiskAnalysisRequestBody = z.infer<typeof riskAnalysisRequestSchema>;
+export type LoginRequestBody = z.infer<typeof loginRequestSchema>;
+export type RejectApprovalRequestBody = z.infer<typeof rejectApprovalRequestSchema>;

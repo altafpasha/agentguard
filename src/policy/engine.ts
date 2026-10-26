@@ -67,6 +67,14 @@ export class PolicyEngine {
         store: this.policyStore,
         defaultPolicy: this.defaultPolicy,
       });
+
+    if (this.defaultPolicy) {
+      void this.policyStore.createPolicyVersion(this.defaultPolicy).catch(() => {});
+    }
+  }
+
+  public getDefaultPolicy(): PolicyDefinition | undefined {
+    return this.defaultPolicy;
   }
 
   /**

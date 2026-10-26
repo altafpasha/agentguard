@@ -9,6 +9,7 @@ export class MemoryAuditRepository implements IAuditRepository {
     const record: AuditRecord = {
       ...event,
       id: event.id ?? `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      riskResult: sanitizeAuditPayload(event.riskResult),
       payloadSummary: sanitizeAuditPayload(event.payloadSummary),
       createdAt: event.createdAt ?? new Date().toISOString(),
     };

@@ -14,8 +14,12 @@ import {
   policyRoutes,
   paymentRoutes,
   auditRoutes,
+  authRoutes,
+  approvalRoutes,
 } from './routes';
 import { IRiskAnalyzerProvider, OpenRouterRiskAnalyzer } from './ai';
+import { IReviewerAuthService, PostgresReviewerAuthService } from './auth';
+import { HumanApprovalService, PostgresApprovalStore } from './approval';
 
 export interface AppDependencies {
   config?: EnvConfig;
@@ -24,6 +28,8 @@ export interface AppDependencies {
   auditRepo?: IAuditRepository;
   paymentAdapter?: IPayPalSandboxAdapter;
   aiRiskAnalyzer?: IRiskAnalyzerProvider;
+  authService?: IReviewerAuthService;
+  approvalService?: HumanApprovalService;
 }
 
 export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
@@ -58,6 +64,18 @@ export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
   const policyEngine = dependencies.policyEngine ?? PolicyEngine.fromConfig(config);
   const auditRepo =
     dependencies.auditRepo ?? new PostgresAuditRepository(config.DATABASE_URL);
+
+  const authService =
+    dependencies.authService ?? new PostgresReviewerAuthService(config.DATABASE_URL);
+
+  const approvalService =
+    dependencies.approvalService ??
+    new HumanApprovalService({
+      store: new PostgresApprovalStore(config.DATABASE_URL),
+      policyEngine,
+      auditRepo,
+    });
+
   const paymentAdapter =
     dependencies.paymentAdapter ??
     new PayPalSandboxAdapter(
@@ -69,7 +87,8 @@ export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
         timeoutMs: config.PAYPAL_TIMEOUT_MS,
       },
       config.PAYPAL_ALLOW_LIVE_EXECUTION,
-      policyEngine.getAuthorizationEngine()
+      policyEngine.getAuthorizationEngine(),
+      approvalService
     );
 
   const aiRiskAnalyzer =
@@ -152,8 +171,10 @@ export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
   // Register Routes
   app.register(healthRoutes, { auditRepo });
   app.register(scanRoutes, { scanner, auditRepo });
-  app.register(policyRoutes, { policyEngine, auditRepo, aiRiskAnalyzer });
-  app.register(paymentRoutes, { scanner, policyEngine, paymentAdapter, auditRepo });
+  app.register(authRoutes, { authService });
+  app.register(approvalRoutes, { approvalService, authService });
+  app.register(policyRoutes, { policyEngine, auditRepo, aiRiskAnalyzer, approvalService });
+  app.register(paymentRoutes, { scanner, policyEngine, paymentAdapter, auditRepo, approvalService });
   app.register(auditRoutes, { auditRepo });
 
   return app;

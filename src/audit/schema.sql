@@ -6,10 +6,19 @@ CREATE TABLE IF NOT EXISTS audit_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     request_id VARCHAR(128) NOT NULL,
     agent_id VARCHAR(128) NOT NULL,
+    action VARCHAR(64) DEFAULT 'UNKNOWN' NOT NULL,
+    merchant VARCHAR(255),
+    amount_cents BIGINT,
+    amount_formatted VARCHAR(32),
+    currency VARCHAR(3),
+    policy_version INT,
+    risk_result JSONB,
+    decision VARCHAR(32),
+    decision_reasons JSONB DEFAULT '[]'::jsonb,
+    approval_state VARCHAR(32) DEFAULT 'NONE',
+    paypal_reference VARCHAR(128),
     event_type VARCHAR(64) NOT NULL,
     status VARCHAR(32) NOT NULL,
-    risk_score NUMERIC(4, 3),
-    policy_decision VARCHAR(32),
     payload_summary JSONB,
     error_message TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -88,3 +97,63 @@ CREATE TABLE IF NOT EXISTS transaction_velocity (
 );
 
 CREATE INDEX IF NOT EXISTS idx_velocity_agent_time ON transaction_velocity(agent_id, created_at DESC);
+
+-- 6. Reviewers & Authenticated Sessions
+CREATE TABLE IF NOT EXISTS reviewers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    username VARCHAR(64) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    salt VARCHAR(64) NOT NULL,
+    role VARCHAR(64) NOT NULL DEFAULT 'REVIEWER',
+    name VARCHAR(128) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS reviewer_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_token_hash VARCHAR(64) NOT NULL UNIQUE,
+    reviewer_id UUID NOT NULL REFERENCES reviewers(id) ON DELETE CASCADE,
+    reviewer_username VARCHAR(64) NOT NULL,
+    reviewer_role VARCHAR(64) NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_reviewer_sessions_token ON reviewer_sessions(session_token_hash);
+CREATE INDEX IF NOT EXISTS idx_reviewer_sessions_reviewer_id ON reviewer_sessions(reviewer_id);
+
+-- 7. Pending Human Approvals
+CREATE TABLE IF NOT EXISTS pending_approvals (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    request_id VARCHAR(128) NOT NULL UNIQUE,
+    agent_id VARCHAR(128) NOT NULL,
+    policy_id VARCHAR(64) NOT NULL,
+    policy_version INT NOT NULL,
+    tool VARCHAR(64) NOT NULL,
+    operation VARCHAR(64) NOT NULL,
+    amount_cents BIGINT NOT NULL,
+    amount_formatted VARCHAR(32) NOT NULL,
+    currency VARCHAR(3) NOT NULL,
+    merchant VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL,
+    risk_score NUMERIC(4, 3),
+    risk_category VARCHAR(64),
+    risk_reasons JSONB NOT NULL DEFAULT '[]'::jsonb,
+    suspicious_spans JSONB NOT NULL DEFAULT '[]'::jsonb,
+    transaction_digest VARCHAR(128) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    reviewed_by VARCHAR(128),
+    reviewed_at TIMESTAMPTZ,
+    rejection_reason TEXT,
+    server_authorization_token VARCHAR(128),
+    token_expires_at TIMESTAMPTZ,
+    is_consumed BOOLEAN NOT NULL DEFAULT FALSE,
+    consumed_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_approvals_status ON pending_approvals(status);
+CREATE INDEX IF NOT EXISTS idx_pending_approvals_token ON pending_approvals(server_authorization_token);
+CREATE INDEX IF NOT EXISTS idx_pending_approvals_agent ON pending_approvals(agent_id, created_at DESC);

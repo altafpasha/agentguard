@@ -4,3 +4,5 @@ export * from './scan';
 export * from './policy';
 export * from './payment';
 export * from './audit';
+export * from './auth';
+export * from './approval';

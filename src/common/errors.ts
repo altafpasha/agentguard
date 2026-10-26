@@ -62,6 +62,24 @@ export class NotFoundError extends AppError {
 }
 
 /**
+ * Authentication failure or missing credentials (401)
+ */
+export class UnauthorizedError extends AppError {
+  constructor(message = 'Authentication required', details?: unknown) {
+    super(message, 401, 'UNAUTHORIZED', details);
+  }
+}
+
+/**
+ * State conflict or duplicate action (409)
+ */
+export class ConflictError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(message, 409, 'CONFLICT', details);
+  }
+}
+
+/**
  * PayPal Adapter Error or Not Implemented (501 or 502)
  */
 export class PaymentAdapterError extends AppError {

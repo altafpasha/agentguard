@@ -22,6 +22,8 @@ AgentGuard is a high-assurance, defense-in-depth security gateway built in TypeS
   - [OpenRouter Risk-Analysis Layer](#4-openrouter-risk-analysis-layer--semantic-classifier)
   - [PayPal Sandbox Orders & Payments](#5-paypal-sandbox-orders--payments)
   - [Audit Trail Queries](#6-audit-trail-queries)
+  - [Human Approval Workflow & Reviewer Sessions](#7-human-approval-workflow--reviewer-sessions)
+  - [Drizzle ORM, Migrations & Database Durability](#8-drizzle-orm-migrations--database-durability)
 - [Feature Implementation Status](#-feature-implementation-status)
 - [Security Guidelines](#-security-guidelines)
 
@@ -714,6 +716,211 @@ curl -X GET http://localhost:3000/api/v1/audit/agent/agent-procurement?limit=20
 
 ---
 
+### 7. Human Approval Workflow & Reviewer Sessions
+
+When a transaction exceeds mandatory approval thresholds (e.g., transactions > $25.00 USD) or presents suspicious risk indicators, the deterministic policy engine evaluates the action as `HOLD`. Payment execution is **strictly prohibited** until an authenticated human reviewer reviews and approves the exact pending action.
+
+```
+AI Agent Request (HOLD) ──> Pending Approval Created (PENDING)
+                                       │
+                                       ▼
+                              Authenticated Reviewer
+                               (scrypt + session token)
+                                       │
+                       ┌───────────────┴───────────────┐
+                       │                               │
+                       ▼                               ▼
+               POST .../approve                POST .../reject
+                       │                               │
+       Revalidates Hard Constraints            Status: REJECTED
+       Binds to Transaction Digest             Execution Prohibited
+       Issues Single-Use Auth Token                    │
+                       │                               ▼
+                       ▼                       Audit Trail Logged
+             Payment Adapter Consumes
+             Token Atomically (1-time use)
+```
+
+#### A. Reviewer Authentication: `POST /api/v1/auth/login`
+Authenticates a human reviewer using scrypt-hashed passwords (`N=16384, r=8, p=1`) and issues a cryptographically secure 256-bit session token.
+
+```bash
+curl -X POST http://localhost:3000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "reviewer_alice",
+    "password": "SecurePassword123!"
+  }'
+```
+Response (`200 OK`):
+```json
+{
+  "message": "Authentication successful.",
+  "sessionToken": "4e78a631bf293d0f01a719c8f6e2b104...",
+  "expiresAt": "2026-10-27T11:40:00.000Z",
+  "reviewer": {
+    "id": "rev_0190127a-b4c5-7d8e-9f0a-1b2c3d4e5f6a",
+    "username": "reviewer_alice",
+    "displayName": "Alice Reviewer",
+    "role": "REVIEWER"
+  }
+}
+```
+
+#### B. Reviewer Logout & Session Revocation: `POST /api/v1/auth/logout`
+Revokes the reviewer session immediately.
+
+```bash
+curl -X POST http://localhost:3000/api/v1/auth/logout \
+  -H "Authorization: Bearer 4e78a631bf293d0f01a719c8f6e2b104..."
+```
+Response (`200 OK`):
+```json
+{
+  "message": "Reviewer session revoked successfully."
+}
+```
+
+#### C. List Pending Actions: `GET /api/v1/approvals/pending`
+Displays all held actions awaiting human review, including agent identity, intended merchant, amount, currency, policy version, risk reasons, and suspicious text spans.
+
+```bash
+curl -X GET http://localhost:3000/api/v1/approvals/pending \
+  -H "Authorization: Bearer 4e78a631bf293d0f01a719c8f6e2b104..."
+```
+Response (`200 OK`):
+```json
+{
+  "count": 1,
+  "pendingApprovals": [
+    {
+      "id": "appr_7c9b0e1d-2f3a-4b5c-6d7e-8f9a0b1c2d3e",
+      "requestId": "req_hold_001",
+      "agentId": "agent-procurement",
+      "policyId": "default",
+      "policyVersion": 1,
+      "tool": "paypal_payment",
+      "operation": "capture_payment",
+      "amountCents": "10000",
+      "amountFormatted": "100.00",
+      "currency": "USD",
+      "merchant": "sb-merchant1@business.example.com",
+      "description": "High-tier server replenishment",
+      "riskScore": 0.35,
+      "riskCategory": "HIGH_VALUE",
+      "riskReasons": [
+        "MANDATORY_APPROVAL_REQUIRED: Amount 100.00 USD exceeds approval threshold of 25.00 USD"
+      ],
+      "suspiciousSpans": [],
+      "transactionDigest": "f3b9c7a2e1d04b8...",
+      "status": "PENDING",
+      "isConsumed": false,
+      "expiresAt": "2026-10-26T12:00:00.000Z",
+      "createdAt": "2026-10-26T11:45:00.000Z"
+    }
+  ]
+}
+```
+
+#### D. Approve Pending Action: `POST /api/v1/approvals/:id/approve`
+Approves the exact pending action. Performs:
+1. Verifies the reviewer session is active.
+2. Verifies the action is currently `PENDING` and unexpired.
+3. Re-computes and matches the immutable transaction digest (`sha256(requestId|agentId|tool|operation|amountCents|currency|merchant|policyVersion)`).
+4. Revalidates the transaction against current hard security constraints (merchant denylists, currency rules, maximum limits).
+5. Issues a single-use `serverAuthorizationToken` (default TTL: 300 seconds).
+
+```bash
+curl -X POST http://localhost:3000/api/v1/approvals/appr_7c9b0e1d-2f3a-4b5c-6d7e-8f9a0b1c2d3e/approve \
+  -H "Authorization: Bearer 4e78a631bf293d0f01a719c8f6e2b104..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tokenTtlSeconds": 300
+  }'
+```
+Response (`200 OK`):
+```json
+{
+  "message": "Action approved successfully. Server authorization token issued.",
+  "approval": {
+    "id": "appr_7c9b0e1d-2f3a-4b5c-6d7e-8f9a0b1c2d3e",
+    "requestId": "req_hold_001",
+    "status": "APPROVED",
+    "reviewedBy": "reviewer_alice",
+    "reviewedAt": "2026-10-26T11:47:00.000Z",
+    "serverAuthorizationToken": "auth_a1b2c3d4e5f6...",
+    "tokenExpiresAt": "2026-10-26T11:52:00.000Z",
+    "isConsumed": false
+  }
+}
+```
+
+#### E. Reject Pending Action: `POST /api/v1/approvals/:id/reject`
+Rejects the pending action with a documented business reason, permanently prohibiting execution.
+
+```bash
+curl -X POST http://localhost:3000/api/v1/approvals/appr_7c9b0e1d-2f3a-4b5c-6d7e-8f9a0b1c2d3e/reject \
+  -H "Authorization: Bearer 4e78a631bf293d0f01a719c8f6e2b104..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reason": "Unapproved vendor pricing mismatch."
+  }'
+```
+Response (`200 OK`):
+```json
+{
+  "message": "Action rejected successfully. Execution permanently prohibited.",
+  "approval": {
+    "id": "appr_7c9b0e1d-2f3a-4b5c-6d7e-8f9a0b1c2d3e",
+    "status": "REJECTED",
+    "reviewedBy": "reviewer_alice",
+    "reviewedAt": "2026-10-26T11:48:00.000Z",
+    "rejectionReason": "Unapproved vendor pricing mismatch."
+  }
+}
+```
+
+---
+
+### 8. Drizzle ORM, Migrations & Database Durability
+
+AgentGuard uses **Drizzle ORM** with PostgreSQL 16 for durable state management, transactional concurrency safety, and schema migrations.
+
+#### A. Database Schema
+Defined in [`src/db/schema.ts`](file:///home/codesec/agentguard/src/db/schema.ts):
+- `reviewers`: Human reviewer credentials (scrypt salt + hash, display name, role, active status).
+- `reviewer_sessions`: Active reviewer sessions (SHA-256 hashed session token, expiration, revocation status).
+- `pending_approvals`: Held actions awaiting review (amounts in integer cents, immutable transaction digest, single-use auth tokens, review outcome).
+- `audit_events`: Durable tamper-evident audit log with 13 structured event fields, scrubbed secrets, and query indexes.
+- `policy_definitions`: Versioned deterministic policies with integer cent limits and tool permissions.
+- `agent_daily_spend`: Per-agent cumulative spend per calendar day with atomic locking.
+- `authorization_records`: Server authorization tokens issued for direct policy executions.
+- `transaction_velocity`: Per-agent transaction velocity tracking across rolling time windows.
+
+#### B. Running Migrations
+```bash
+# Generate SQL migration files from schema definition
+npm run db:generate
+
+# Execute pending migrations against PostgreSQL
+npm run db:migrate
+```
+
+#### C. Database Recovery & Retention Policies
+1. **Point-In-Time Recovery (PITR)**:
+   - In production deployments, PostgreSQL Write-Ahead Logging (`WAL`) archiving should be configured alongside daily physical base backups (e.g., via `pg_dump` or `pgBackRest`).
+   - Because all transaction approvals and audit events have immutable UUID primary keys and ISO-8601 UTC timestamps, recovery to any specific second reproduces exact approval states and audit records.
+2. **Data Retention & Pruning**:
+   - `audit_events` and `pending_approvals` are **permanently retained** by default for security auditing and financial compliance.
+   - `reviewer_sessions` and expired pending records can be safely archived or pruned after their retention window (e.g. 90 days) using automated cleanup tasks.
+3. **Concurrency Guarantees**:
+   - **PostgreSQL Store (`PostgresApprovalStore`)**: Uses pessimistic row-level locking (`SELECT ... FOR UPDATE`) inside atomic database transactions. This guarantees that:
+     - Two concurrent reviewer approval requests cannot both succeed; exactly one transitions to `APPROVED` while the other receives `409 Conflict`.
+     - Two concurrent payment execution requests presenting the same authorization token cannot execute twice; the first consumes the token atomically (`is_consumed = true`), and the second is rejected with `409 Conflict`.
+   - **In-Memory Store (`MemoryApprovalStore`)**: Uses asynchronous promise-based mutex locks per record ID to serialize concurrent calls in testing and lightweight environments.
+
+---
+
 ## 📊 Feature Implementation Status
 
 | Component | Status | Details |
@@ -721,15 +928,18 @@ curl -X GET http://localhost:3000/api/v1/audit/agent/agent-procurement?limit=20
 | **Request Ingress & Schemas** | ✅ Complete | Fastify 5 + Zod schemas, automatic request ID tracking (`X-Request-Id`), CORS, and centralized error handling |
 | **Injection Scanner** | ✅ Complete | Zero-width Unicode restoration, Base64 payload decoding, regex heuristic rules, risk scoring, threat levels |
 | **Deterministic Authorization Engine** | ✅ Complete | Tripartite decision contract (`ALLOW`, `HOLD`, `BLOCK`), integer cent validation, velocity windows, merchant allow/denylists, deny-by-default, and single-use cryptographic authorization tokens |
-| **PostgreSQL Concurrency Protection** | ✅ Complete | Durable state in PostgreSQL 16; atomic daily spend checks using row-level locking (`SELECT ... FOR UPDATE`), transaction rollback, and versioned policy history |
+| **Human Approval Workflow (HITL)** | ✅ Complete | Mandatory approval thresholds (`HOLD`), pending approval queue, authenticated reviewer review, immutable transaction digest binding, short-lived single-use server authorization tokens |
+| **Reviewer Session Auth** | ✅ Complete | Scrypt password hashing (`N=16384, r=8, p=1`), constant-time verification, 256-bit cryptographically secure session tokens, session revocation |
+| **Drizzle ORM & Migrations** | ✅ Complete | Type-safe schema definitions, automated SQL migration generation (`drizzle-kit`), programmatic migration runner, durable PostgreSQL persistence |
+| **PostgreSQL Concurrency Protection** | ✅ Complete | Durable state in PostgreSQL 16; atomic daily spend checks and approval state transitions using row-level locking (`SELECT ... FOR UPDATE`), transaction rollback, and versioned policy history |
 | **OpenRouter Risk-Analysis Layer** | ✅ Complete | Minimum context isolation (`<TRUSTED>` vs `<UNTRUSTED>`), Zod schema validation, sliding-window rate limiter, fail-closed semantics, and 8-scenario local fixture evaluation suite |
 | **PayPal Sandbox REST Client** | ✅ Complete | Official Orders v2 REST client (`api-m.sandbox.paypal.com`), OAuth2 token caching with expiry buffer & promise coalescing |
 | **Separated Order Creation & Capture** | ✅ Complete | `POST /api/v1/payments/orders` creates order without capture; `POST .../capture` strictly requires policy authorization |
 | **Order Reconciliation & Idempotency** | ✅ Complete | `PayPal-Request-Id` idempotency tracking; ambiguous network timeouts query `GET /v2/checkout/orders/{id}` before retry |
 | **Server Authorization Token Verification** | ✅ Complete | PayPal adapter verifies server-issued authorization tokens before execution; ignores client-supplied `"approved": true` flags |
-| **PostgreSQL Audit Repository** | ✅ Complete | SQL schema with UUID & indexes, recursive secret sanitizer, connection pooling, graceful shutdown |
+| **Durable Audit Trail Repository** | ✅ Complete | PostgreSQL durable audit log with 13 structured fields (request, agent, merchant, amounts, risk result, decision reasons, approval state, PayPal references), recursive secret sanitizer |
 | **Containerization** | ✅ Complete | Multi-stage Dockerfile (non-root `node` runner), Docker Compose with healthchecks and network isolation |
-| **Test Suite & Coverage** | ✅ Complete | 136 tests passing across 19 test files (100% active tests passing); unit, contract, fixture evaluation, and live integration tests |
+| **Test Suite & Coverage** | ✅ Complete | 144 tests passing across 20 test files (100% active tests passing); unit, contract, fixture evaluation, concurrency, and live integration tests |
 | **Live PayPal Sandbox Integration Test** | ✅ Labeled & Ready | Runs automatically when real credentials are placed in `.env`; explicitly skipped with labeled notification when credentials are not supplied |
 | **Live OpenRouter Integration Test** | ✅ Labeled & Ready | Runs automatically when real credentials are placed in `.env`; explicitly skipped with labeled notification when credentials are not supplied |
 
