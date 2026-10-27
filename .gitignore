@@ -45,6 +45,11 @@ Thumbs.db
 *.sublime-project
 *.sublime-workspace
 
-# Temporary files
+# Temporary & scratch files
 tmp/
 temp/
+scratch/
+
+# Screenshot artifacts (preserve docs/screenshots)
+*.png
+!docs/screenshots/*.png
