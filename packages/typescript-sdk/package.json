@@ -1,0 +1,48 @@
+{
+  "name": "@codesec-ai/agentguard",
+  "version": "1.0.1",
+  "description": "Official TypeScript & Node.js SDK for the AgentGuard AI Agent Security Gateway",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json --emitDeclarationOnly && esbuild src/index.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist/index.js && esbuild src/index.ts --bundle --platform=node --target=node18 --format=esm --outfile=dist/index.mjs",
+    "test": "vitest run",
+    "prepack": "npm run build"
+  },
+  "keywords": [
+    "agentguard",
+    "ai-agent",
+    "security-gateway",
+    "policy-engine",
+    "prompt-injection",
+    "razorpay",
+    "paypal",
+    "fail-closed"
+  ],
+  "author": "CodeSec AI / AgentGuard Security Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/altafpasha/agentguard.git",
+    "directory": "packages/typescript-sdk"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
