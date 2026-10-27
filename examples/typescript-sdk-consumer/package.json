@@ -1,0 +1,23 @@
+{
+  "name": "agentguard-typescript-sdk-consumer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Production-grade reference implementation consuming @codesec-ai/agentguard v1.0.1",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/index.ts",
+    "demo": "tsx src/index.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@codesec-ai/agentguard": "1.0.1",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.7"
+  }
+}
