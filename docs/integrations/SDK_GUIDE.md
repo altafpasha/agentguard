@@ -3,7 +3,7 @@
 Official SDK packages for integrating external applications (Node.js, Python, merchant backends) with the AgentGuard AI Security Gateway.
 
 - **TypeScript / Node.js SDK**: `@codesec-ai/agentguard` (in `packages/typescript-sdk/`)
-- **Python SDK**: `agentguard-sdk` (in `packages/python-sdk/`)
+- **Python SDK**: `agentguard` (in `packages/python-sdk/`)
 
 ---
 
@@ -92,7 +92,7 @@ Requirements:
 
 ```bash
 # In your Python virtualenv
-pip install agentguard-sdk
+pip install agentguard
 
 # Or install from local package directory
 pip install -e packages/python-sdk

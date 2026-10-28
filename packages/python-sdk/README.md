@@ -1,4 +1,4 @@
-# agentguard-sdk (Python)
+# agentguard (Python SDK)
 
 Official Python SDK for the **AgentGuard** AI Agent Security Gateway.
 
@@ -9,7 +9,7 @@ AgentGuard intercepts, evaluates, and verifies autonomous AI agent actions again
 ## Installation
 
 ```bash
-pip install agentguard-sdk
+pip install agentguard
 ```
 
 Or install locally in editable mode:
