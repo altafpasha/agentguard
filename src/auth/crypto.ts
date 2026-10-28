@@ -41,6 +41,20 @@ export function hashSessionToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
+/**
+ * Generate a cryptographically secure random invitation token
+ */
+export function generateInviteToken(): string {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+/**
+ * Hash an invitation token using SHA-256 for safe database storage
+ */
+export function hashInviteToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
 export interface TransactionDigestInput {
   requestId: string;
   agentId: string;
@@ -69,4 +83,27 @@ export function createTransactionDigest(input: TransactionDigestInput): string {
   ].join('|');
 
   return crypto.createHash('sha256').update(canonical).digest('hex');
+}
+
+/**
+ * Enforce strong password policy:
+ * - At least 8 characters
+ * - At least one uppercase letter
+ * - At least one lowercase letter
+ * - At least one digit or special character
+ */
+export function validatePasswordStrength(password: string): { valid: boolean; message?: string } {
+  if (!password || password.length < 8) {
+    return { valid: false, message: 'Password must be at least 8 characters long.' };
+  }
+  if (!/[A-Z]/.test(password)) {
+    return { valid: false, message: 'Password must contain at least one uppercase letter.' };
+  }
+  if (!/[a-z]/.test(password)) {
+    return { valid: false, message: 'Password must contain at least one lowercase letter.' };
+  }
+  if (!/[0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?~`]/.test(password)) {
+    return { valid: false, message: 'Password must contain at least one number or special character.' };
+  }
+  return { valid: true };
 }

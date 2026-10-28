@@ -2,15 +2,19 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { FastifyInstance } from 'fastify';
 import { buildApp } from '../../src/app';
 import { MemoryAuditRepository } from '../../src/audit/memory-audit-repo';
+import { MemoryReviewerAuthService } from '../../src/auth/service';
 import { loadConfig } from '../../src/config/env';
 import { MockRiskAnalyzer } from '../../src/ai';
 
 describe('Policy Evaluation API Contract (POST /api/v1/evaluate-policy)', () => {
   let app: FastifyInstance;
   let auditRepo: MemoryAuditRepository;
+  let authService: MemoryReviewerAuthService;
+  let authToken: string;
 
   beforeEach(async () => {
     auditRepo = new MemoryAuditRepository();
+    authService = new MemoryReviewerAuthService();
     const config = loadConfig({
       LOG_LEVEL: 'silent',
       NODE_ENV: 'test',
@@ -19,8 +23,16 @@ describe('Policy Evaluation API Contract (POST /api/v1/evaluate-policy)', () => 
       POLICY_ALLOWED_CURRENCIES: 'USD,EUR,GBP',
       POLICY_RECIPIENT_DENYLIST: 'blocked@fraud.com',
     });
-    app = buildApp({ config, auditRepo, aiRiskAnalyzer: new MockRiskAnalyzer() });
+    app = buildApp({ config, auditRepo, authService, aiRiskAnalyzer: new MockRiskAnalyzer() });
     await app.ready();
+
+    const setup = await authService.setupOwner({
+      name: 'Policy Admin',
+      username: 'policyadmin',
+      email: 'policy@defense.node',
+      password: 'PolicyAdminPassword123!',
+    });
+    authToken = setup.sessionToken;
   });
 
   afterEach(async () => {
@@ -170,10 +182,17 @@ describe('Policy Evaluation API Contract (POST /api/v1/evaluate-policy)', () => 
   });
 
   describe('Policy Version History (GET /api/v1/policies/history/:policyId)', () => {
-    it('returns version history for active and archived policy versions', async () => {
+    it('returns 401 when unauthenticated and 200 with version history when authenticated', async () => {
+      const unauth = await app.inject({
+        method: 'GET',
+        url: '/api/v1/policies/history/default',
+      });
+      expect(unauth.statusCode).toBe(401);
+
       const response = await app.inject({
         method: 'GET',
         url: '/api/v1/policies/history/default',
+        headers: { authorization: `Bearer ${authToken}` },
       });
 
       expect(response.statusCode).toBe(200);

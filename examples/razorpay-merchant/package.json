@@ -1,0 +1,18 @@
+{
+  "name": "agentguard-razorpay-merchant-example",
+  "version": "1.0.0",
+  "description": "Sample merchant application integrating AgentGuard policy evaluation before Razorpay payment execution",
+  "main": "server.ts",
+  "scripts": {
+    "start": "tsx server.ts",
+    "demo": "tsx demo-flow.ts"
+  },
+  "dependencies": {
+    "razorpay": "^2.9.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}

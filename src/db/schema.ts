@@ -25,14 +25,18 @@ export const reviewers = pgTable(
   {
     id: uuid('id').defaultRandom().primaryKey(),
     username: varchar('username', { length: 64 }).notNull().unique(),
+    email: varchar('email', { length: 255 }).unique(),
     passwordHash: varchar('password_hash', { length: 255 }).notNull(),
     salt: varchar('salt', { length: 64 }).notNull(),
-    role: varchar('role', { length: 64 }).notNull().default('REVIEWER'),
+    role: varchar('role', { length: 64 }).notNull().default('ANALYST'),
     name: varchar('name', { length: 128 }).notNull(),
+    status: varchar('status', { length: 32 }).notNull().default('ACTIVE'),
+    lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     uniqueIndex('idx_reviewers_username').on(table.username),
+    uniqueIndex('idx_reviewers_email').on(table.email),
   ]
 );
 
@@ -53,6 +57,64 @@ export const reviewerSessions = pgTable(
   (table) => [
     uniqueIndex('idx_reviewer_sessions_token').on(table.sessionTokenHash),
     index('idx_reviewer_sessions_reviewer_id').on(table.reviewerId),
+  ]
+);
+
+export const userInvitations = pgTable(
+  'user_invitations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    email: varchar('email', { length: 255 }).notNull(),
+    role: varchar('role', { length: 32 }).notNull().default('ANALYST'),
+    tokenHash: varchar('token_hash', { length: 64 }).notNull().unique(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    revoked: boolean('revoked').notNull().default(false),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdBy: uuid('created_by').references(() => reviewers.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_user_invitations_token').on(table.tokenHash),
+    index('idx_user_invitations_email').on(table.email),
+  ]
+);
+
+export const authSettings = pgTable(
+  'auth_settings',
+  {
+    id: varchar('id', { length: 64 }).primaryKey(),
+    allowPublicSignup: boolean('allow_public_signup').notNull().default(false),
+    defaultUserRole: varchar('default_user_role', { length: 32 }).notNull().default('VIEWER'),
+    requireEmailVerification: boolean('require_email_verification').notNull().default(false),
+    inviteOnly: boolean('invite_only').notNull().default(true),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedBy: varchar('updated_by', { length: 128 }),
+  }
+);
+
+export const apiKeys = pgTable(
+  'api_keys',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    name: varchar('name', { length: 128 }).notNull(),
+    keyPrefix: varchar('key_prefix', { length: 32 }).notNull(),
+    keyHash: varchar('key_hash', { length: 64 }).notNull().unique(),
+    workspaceId: varchar('workspace_id', { length: 64 }).notNull().default('default'),
+    role: varchar('role', { length: 32 }).notNull().default('CLIENT'),
+    permissions: jsonb('permissions').$type<string[]>().notNull().default(['evaluate']),
+    rateLimitRpm: integer('rate_limit_rpm').notNull().default(600),
+    revoked: boolean('revoked').notNull().default(false),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    createdBy: varchar('created_by', { length: 128 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_api_keys_hash').on(table.keyHash),
+    index('idx_api_keys_workspace').on(table.workspaceId),
+    index('idx_api_keys_prefix').on(table.keyPrefix),
   ]
 );
 
@@ -224,6 +286,91 @@ export const transactionVelocity = pgTable(
   ]
 );
 
+// ============================================================================
+// 6. Store Products, Orders, and Pricing Plans
+// ============================================================================
+
+export const storeProducts = pgTable(
+  'store_products',
+  {
+    id: varchar('id', { length: 64 }).primaryKey(),
+    name: varchar('name', { length: 255 }).notNull(),
+    category: varchar('category', { length: 64 }).notNull(),
+    priceCents: bigint('price_cents', { mode: 'bigint' }).notNull(),
+    priceFormatted: varchar('price_formatted', { length: 32 }).notNull(),
+    currency: varchar('currency', { length: 3 }).notNull().default('USD'),
+    description: text('description').notNull(),
+    details: text('details'),
+    imageUrl: text('image_url'),
+    stock: integer('stock').notNull().default(100),
+    isAvailable: boolean('is_available').notNull().default(true),
+    merchantEmail: varchar('merchant_email', { length: 255 }).notNull(),
+    merchantName: varchar('merchant_name', { length: 255 }).notNull(),
+    isMalicious: boolean('is_malicious').notNull().default(false),
+    expectedScenario: varchar('expected_scenario', { length: 32 }).default('A'),
+    injectionSnippet: text('injection_snippet'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_store_products_category').on(table.category),
+    index('idx_store_products_available').on(table.isAvailable),
+  ]
+);
+
+export const storeOrders = pgTable(
+  'store_orders',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    orderNumber: varchar('order_number', { length: 64 }).notNull().unique(),
+    items: jsonb('items').$type<any[]>().notNull(),
+    totalCents: bigint('total_cents', { mode: 'bigint' }).notNull(),
+    totalFormatted: varchar('total_formatted', { length: 32 }).notNull(),
+    currency: varchar('currency', { length: 3 }).notNull().default('USD'),
+    merchantEmail: varchar('merchant_email', { length: 255 }).notNull(),
+    merchantName: varchar('merchant_name', { length: 255 }).notNull(),
+    status: varchar('status', { length: 64 }).notNull().default('PENDING'),
+    customerEmail: varchar('customer_email', { length: 255 }),
+    agentId: varchar('agent_id', { length: 128 }),
+    paypalOrderId: varchar('paypal_order_id', { length: 128 }),
+    paypalApprovalUrl: text('paypal_approval_url'),
+    paypalCaptureId: varchar('paypal_capture_id', { length: 128 }),
+    securityDecision: varchar('security_decision', { length: 16 }).notNull().default('ALLOW'),
+    securityReason: text('security_reason'),
+    securityViolations: jsonb('security_violations').$type<string[]>().default([]),
+    humanApprovalId: uuid('human_approval_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_store_orders_number').on(table.orderNumber),
+    index('idx_store_orders_paypal').on(table.paypalOrderId),
+    index('idx_store_orders_status').on(table.status),
+    index('idx_store_orders_created').on(table.createdAt),
+  ]
+);
+
+export const storePricingPlans = pgTable(
+  'store_pricing_plans',
+  {
+    id: varchar('id', { length: 64 }).primaryKey(),
+    name: varchar('name', { length: 128 }).notNull(),
+    tier: varchar('tier', { length: 64 }).notNull(),
+    priceMonthlyCents: bigint('price_monthly_cents', { mode: 'bigint' }).notNull(),
+    priceMonthlyFormatted: varchar('price_monthly_formatted', { length: 32 }).notNull(),
+    currency: varchar('currency', { length: 3 }).notNull().default('USD'),
+    billingInterval: varchar('billing_interval', { length: 32 }).notNull().default('monthly'),
+    description: text('description').notNull(),
+    features: jsonb('features').$type<string[]>().notNull().default([]),
+    roadmapFeatures: jsonb('roadmap_features').$type<string[]>().notNull().default([]),
+    badge: varchar('badge', { length: 64 }),
+    isPopular: boolean('is_popular').notNull().default(false),
+    status: varchar('status', { length: 32 }).notNull().default('AVAILABLE'),
+    ctaText: varchar('cta_text', { length: 64 }).notNull(),
+    ctaAction: varchar('cta_action', { length: 64 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  }
+);
+
 // Type definitions
 export type Reviewer = typeof reviewers.$inferSelect;
 export type NewReviewer = typeof reviewers.$inferInsert;
@@ -231,8 +378,24 @@ export type NewReviewer = typeof reviewers.$inferInsert;
 export type ReviewerSession = typeof reviewerSessions.$inferSelect;
 export type NewReviewerSession = typeof reviewerSessions.$inferInsert;
 
+export type UserInvitation = typeof userInvitations.$inferSelect;
+export type NewUserInvitation = typeof userInvitations.$inferInsert;
+
+export type ApiKey = typeof apiKeys.$inferSelect;
+export type NewApiKey = typeof apiKeys.$inferInsert;
+
 export type PendingApproval = typeof pendingApprovals.$inferSelect;
 export type NewPendingApproval = typeof pendingApprovals.$inferInsert;
 
 export type AuditEvent = typeof auditEvents.$inferSelect;
 export type NewAuditEvent = typeof auditEvents.$inferInsert;
+
+export type StoreProductRow = typeof storeProducts.$inferSelect;
+export type NewStoreProductRow = typeof storeProducts.$inferInsert;
+
+export type StoreOrderRow = typeof storeOrders.$inferSelect;
+export type NewStoreOrderRow = typeof storeOrders.$inferInsert;
+
+export type StorePricingPlanRow = typeof storePricingPlans.$inferSelect;
+export type NewStorePricingPlanRow = typeof storePricingPlans.$inferInsert;
+

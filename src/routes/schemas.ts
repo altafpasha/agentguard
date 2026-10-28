@@ -77,8 +77,59 @@ export const riskAnalysisRequestSchema = z.object({
 });
 
 export const loginRequestSchema = z.object({
-  username: z.string().min(1, 'username is required'),
+  username: z.string().min(1, 'username or email is required'),
   password: z.string().min(1, 'password is required'),
+});
+
+export const setupOwnerRequestSchema = z.object({
+  username: z.string().min(3, 'Username must be at least 3 characters'),
+  email: z.string().email('Valid email address is required'),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+  name: z.string().min(1, 'Name is required'),
+});
+
+export const inviteUserRequestSchema = z.object({
+  email: z.string().email('Valid email address is required'),
+  role: z.enum(['ADMIN', 'EDITOR', 'VIEWER', 'ANALYST']).default('VIEWER'),
+  ttlHours: z.number().int().min(1).max(168).optional().default(48),
+});
+
+export const acceptInviteRequestSchema = z.object({
+  inviteToken: z.string().min(16, 'Invalid invitation token'),
+  username: z.string().min(3, 'Username must be at least 3 characters'),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+  name: z.string().min(1, 'Name is required'),
+});
+
+export const publicRegisterRequestSchema = z.object({
+  username: z.string().min(3, 'Username must be at least 3 characters'),
+  email: z.string().email('Valid email address is required'),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+  name: z.string().min(1, 'Name is required'),
+});
+
+export const changePasswordRequestSchema = z.object({
+  oldPassword: z.string().min(1, 'Current password is required'),
+  newPassword: z.string().min(8, 'New password must be at least 8 characters'),
+});
+
+export const resetPasswordRequestSchema = z.object({
+  tempPassword: z.string().min(8, 'Temporary password must be at least 8 characters').optional(),
+});
+
+export const updateAuthSettingsRequestSchema = z.object({
+  allowPublicSignup: z.boolean().optional(),
+  defaultUserRole: z.enum(['VIEWER', 'EDITOR']).optional(),
+  requireEmailVerification: z.boolean().optional(),
+  inviteOnly: z.boolean().optional(),
+});
+
+export const updateUserStatusRequestSchema = z.object({
+  status: z.enum(['ACTIVE', 'INACTIVE']),
+});
+
+export const updateUserRoleRequestSchema = z.object({
+  role: z.enum(['OWNER', 'ADMIN', 'EDITOR', 'VIEWER', 'ANALYST']),
 });
 
 export const rejectApprovalRequestSchema = z.object({
@@ -92,4 +143,13 @@ export type CreateOrderRequestBody = z.infer<typeof createOrderRequestSchema>;
 export type CaptureOrderRequestBody = z.infer<typeof captureOrderRequestSchema>;
 export type RiskAnalysisRequestBody = z.infer<typeof riskAnalysisRequestSchema>;
 export type LoginRequestBody = z.infer<typeof loginRequestSchema>;
+export type SetupOwnerRequestBody = z.infer<typeof setupOwnerRequestSchema>;
+export type InviteUserRequestBody = z.infer<typeof inviteUserRequestSchema>;
+export type AcceptInviteRequestBody = z.infer<typeof acceptInviteRequestSchema>;
+export type PublicRegisterRequestBody = z.infer<typeof publicRegisterRequestSchema>;
+export type ChangePasswordRequestBody = z.infer<typeof changePasswordRequestSchema>;
+export type ResetPasswordRequestBody = z.infer<typeof resetPasswordRequestSchema>;
+export type UpdateAuthSettingsRequestBody = z.infer<typeof updateAuthSettingsRequestSchema>;
+export type UpdateUserStatusRequestBody = z.infer<typeof updateUserStatusRequestSchema>;
+export type UpdateUserRoleRequestBody = z.infer<typeof updateUserRoleRequestSchema>;
 export type RejectApprovalRequestBody = z.infer<typeof rejectApprovalRequestSchema>;

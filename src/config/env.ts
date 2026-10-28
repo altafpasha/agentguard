@@ -36,12 +36,20 @@ const envSchema = z.object({
     .default(false),
   PAYPAL_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(10000),
 
+  // Razorpay Payment Adapter
+  RAZORPAY_KEY_ID: z.string().default('rzp_test_placeholder'),
+  RAZORPAY_KEY_SECRET: z.string().default('rzp_secret_placeholder'),
+  RAZORPAY_WEBHOOK_SECRET: z.string().default('rzp_webhook_secret_placeholder'),
+  RAZORPAY_ALLOW_LIVE_EXECUTION: z
+    .preprocess((val) => val === 'true' || val === true, z.boolean())
+    .default(false),
+
   // Policy Engine Defaults
   POLICY_MAX_TRANSACTION_AMOUNT: z.coerce.number().positive().default(50.0),
   POLICY_MAX_DAILY_AMOUNT: z.coerce.number().positive().default(200.0),
   POLICY_ALLOWED_CURRENCIES: z
     .string()
-    .default('USD,EUR,GBP')
+    .default('USD,EUR,GBP,INR')
     .transform((val) => val.split(',').map((s) => s.trim().toUpperCase())),
   POLICY_REQUIRE_HUMAN_APPROVAL_THRESHOLD: z.coerce.number().positive().default(25.0),
   POLICY_RECIPIENT_DENYLIST: z
@@ -102,6 +110,9 @@ export function getSanitizedConfig(config: EnvConfig): Record<string, unknown> {
     PAYPAL_API_BASE_URL: config.PAYPAL_API_BASE_URL,
     PAYPAL_ALLOW_LIVE_EXECUTION: config.PAYPAL_ALLOW_LIVE_EXECUTION,
     PAYPAL_TIMEOUT_MS: config.PAYPAL_TIMEOUT_MS,
+    RAZORPAY_KEY_ID: maskSecret(config.RAZORPAY_KEY_ID),
+    RAZORPAY_KEY_SECRET: maskSecret(config.RAZORPAY_KEY_SECRET),
+    RAZORPAY_ALLOW_LIVE_EXECUTION: config.RAZORPAY_ALLOW_LIVE_EXECUTION,
     POLICY_MAX_TRANSACTION_AMOUNT: config.POLICY_MAX_TRANSACTION_AMOUNT,
     POLICY_MAX_DAILY_AMOUNT: config.POLICY_MAX_DAILY_AMOUNT,
     POLICY_ALLOWED_CURRENCIES: config.POLICY_ALLOWED_CURRENCIES,

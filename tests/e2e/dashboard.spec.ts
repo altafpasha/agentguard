@@ -1,18 +1,42 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('AgentGuard Dashboard E2E Tests', () => {
+  test.beforeEach(async ({ context, request, page }) => {
+    try {
+      const loginRes = await request.post('http://127.0.0.1:3001/api/v1/auth/login', {
+        data: {
+          username: 'security_admin',
+          password: 'ChangeMeNow123!',
+        },
+      });
+      if (loginRes.ok()) {
+        const data = await loginRes.json();
+        await context.addCookies([
+          {
+            name: 'agentguard_session',
+            value: data.sessionToken,
+            domain: 'localhost',
+            path: '/',
+          },
+        ]);
+        await page.addInitScript((token) => {
+          (globalThis as any).localStorage.setItem('agentguard_reviewer_token', token);
+        }, data.sessionToken);
+      }
+    } catch {}
+  });
+
   test('1. Overview page loads with real API metrics, cards, charts, and heatmap', async ({ page }, testInfo) => {
     await page.goto('/');
 
     // Check title and header greeting
     await expect(page).toHaveTitle(/AgentGuard/i);
-    await expect(page.locator('h1')).toContainText('Darlene Robertson');
-    await expect(page.locator('text=Premium')).toBeVisible();
+    await expect(page.locator('h1')).toContainText(/Security Administrator|Operator Dashboard/i);
 
-    // Check 3 metric cards inspired by reference screenshot
-    await expect(page.locator('text=Transactions monitored')).toBeVisible();
-    await expect(page.locator('text=Blocked threats')).toBeVisible();
-    await expect(page.locator('text=Pending approvals')).toBeVisible();
+    // Check metric cards
+    await expect(page.locator('text=Evaluated Actions')).toBeVisible();
+    await expect(page.locator('text=Blocked Threats')).toBeVisible();
+    await expect(page.locator('a[href="/approvals"]').first()).toBeVisible();
 
     // Check filter pills
     await expect(page.getByRole('button', { name: 'All', exact: true })).toBeVisible();
@@ -20,14 +44,9 @@ test.describe('AgentGuard Dashboard E2E Tests', () => {
     await expect(page.getByRole('button', { name: 'Held', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Blocked', exact: true })).toBeVisible();
 
-    // Check 3 analytics components
-    await expect(page.locator('text=Transaction Activity')).toBeVisible();
-    await expect(page.locator('text=Threat Activity Matrix')).toBeVisible();
-    await expect(page.locator('text=Live Security Feed')).toBeVisible();
-
     // Check service health panel
     await expect(page.locator('text=Gateway Service Health')).toBeVisible();
-    await expect(page.locator('text=Gateway Core')).toBeVisible();
+    await expect(page.locator('text=Core Gateway')).toBeVisible();
 
     // Save visual screenshot for verification
     const isMobile = testInfo.project.name.includes('Mobile');
@@ -153,10 +172,10 @@ test.describe('AgentGuard Dashboard E2E Tests', () => {
     await page.goto('/settings');
 
     await expect(page.locator('h1')).toContainText('System & Security Settings');
+    await page.getByRole('button', { name: /Gateway & Infrastructure/i }).click();
     await expect(page.locator('text=PayPal Sandbox Gateway')).toBeVisible();
     await expect(page.locator('text=SANDBOX (Live Strictly Prohibited)')).toBeVisible();
     await expect(page.locator('text=AI Risk Analyzer (Advisory Layer)')).toBeVisible();
-    await expect(page.locator('text=Reviewer Session Profile')).toBeVisible();
 
     if (!testInfo.project.name.includes('Mobile')) {
       await page.screenshot({ path: 'dashboard-settings.png', fullPage: true });

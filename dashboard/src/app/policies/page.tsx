@@ -14,12 +14,23 @@ import {
   RefreshCw,
   Clock,
   ArrowRight,
+  Info,
 } from 'lucide-react';
 import { Navigation } from '../../components/Navigation';
+import { AuthGuard, useAuth } from '../../components/AuthGuard';
 import { fetchActivePolicy, fetchPolicyHistory, updatePolicy } from '../../lib/api';
 import { PolicyDefinition } from '../../types';
 
 export default function PoliciesPage() {
+  return (
+    <AuthGuard>
+      <PoliciesContent />
+    </AuthGuard>
+  );
+}
+
+function PoliciesContent() {
+  const { isOwnerOrAdmin } = useAuth();
   const [activePolicy, setActivePolicy] = useState<PolicyDefinition | null>(null);
   const [history, setHistory] = useState<PolicyDefinition[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -136,18 +147,29 @@ export default function PoliciesPage() {
 
           <button
             onClick={handleSavePolicy}
-            disabled={isSaving}
+            disabled={isSaving || !isOwnerOrAdmin}
+            title={!isOwnerOrAdmin ? 'Only administrators and owners can update policies' : undefined}
             id="save-policy-btn"
-            className="px-6 py-2.5 rounded-full bg-[#D7FF70] hover:bg-[#C4F250] text-[#0E1400] text-xs font-bold transition-all shadow-[0_2px_14px_rgba(215,255,112,0.25)] flex items-center gap-2 self-start sm:self-auto disabled:opacity-50"
+            className="w-full sm:w-auto px-6 py-3 rounded-full bg-[#D7FF70] hover:bg-[#C4F250] text-[#0E1400] text-xs font-bold transition-all shadow-[0_2px_14px_rgba(215,255,112,0.25)] flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed btn-press touch-manipulation min-h-[44px]"
           >
             {isSaving ? (
-              <span className="inline-block w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+              <span className="inline-block w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin shrink-0" />
             ) : (
-              <Save className="w-4 h-4" />
+              <Save className="w-4 h-4 shrink-0" />
             )}
             <span>Publish New Policy Version</span>
           </button>
         </div>
+
+        {/* Read-Only Notice for Non-Admins */}
+        {!isOwnerOrAdmin && (
+          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-3 text-xs text-amber-300">
+            <Info className="w-4 h-4 shrink-0 text-amber-400" />
+            <span>
+              <strong>Read-Only Mode:</strong> Modifying deterministic gateway policies requires Administrator or Owner permissions. You have read-only inspection access.
+            </span>
+          </div>
+        )}
 
         {/* Notification Toast */}
         {notification && (

@@ -27,6 +27,8 @@ AgentGuard is a high-assurance, fail-safe security gateway positioned between au
 - [Demonstration Environment & Storefront Demo](#-demonstration-environment--storefront-demo)
 - [Automated Scenarios Runner](#-automated-scenarios-runner)
 - [Running Tests & Quality Verification](#-running-tests--quality-verification)
+- [Official SDK Packages & External Integrations](#-official-sdk-packages--external-integrations)
+- [Razorpay Merchant Integration](#-razorpay-merchant-integration-examplesrazorpay)
 - [Deployment Guide (Render & Docker Compose Fallback)](#-deployment-guide)
 - [API Reference](#-api-reference)
 - [Known Limitations & Security Trade-Offs](#-known-limitations--security-trade-offs)
@@ -304,6 +306,138 @@ All tests run completely offline without requiring live credentials.
 
 ---
 
+## 📦 Official SDK Packages & External Integrations
+
+AgentGuard provides official, production-ready client SDKs for integrating external applications (Node.js, Python, merchant backends) with your self-hosted security gateway.
+
+| Package | Language / Runtime | Distribution | Status | Documentation |
+|:---|:---|:---|:---|:---|
+| **`@codesec-ai/agentguard`** | Node.js >= 18.0.0 (TS/ESM/CJS) | [npm](https://www.npmjs.com/package/@codesec-ai/agentguard) | Ready (v1.0.0) | [TypeScript SDK Guide](docs/integrations/SDK_GUIDE.md) |
+| **`agentguard-sdk`** | Python >= 3.9 (Typed / Zero-dep) | [PyPI](https://pypi.org/project/agentguard-sdk/) | Ready (v1.0.0) | [Python SDK Guide](docs/integrations/SDK_GUIDE.md) |
+
+### 1. TypeScript / Node.js Installation
+
+```bash
+npm install @codesec-ai/agentguard
+```
+
+#### Minimal Working Example
+```typescript
+import { AgentGuard, AgentGuardError } from '@codesec-ai/agentguard';
+
+const guard = new AgentGuard({
+  baseUrl: process.env.AGENTGUARD_URL || 'http://localhost:3001',
+  apiKey: process.env.AGENTGUARD_API_KEY!,
+  timeoutMs: 5000,
+});
+
+// Pre-flight evaluate before calling sensitive payment tools
+const decision = await guard.evaluate({
+  action: 'payment.create',
+  amount: 25.0,
+  currency: 'INR',
+  tool: 'razorpay_payment',
+  agentId: 'autonomous-shopper',
+  description: 'Merchant payment execution',
+});
+
+if (decision.status === 'ALLOW') {
+  // Authoritatively approved: safe to invoke downstream Razorpay / PayPal API
+  console.log('Payment approved:', decision.requestId);
+} else if (decision.status === 'HOLD') {
+  // Held for human operator approval in dashboard
+  console.log('Action requires review. Approval ID:', decision.pendingApprovalId);
+} else {
+  // Authoritatively blocked: NEVER invoke downstream API
+  console.error('Payment blocked by security boundary:', decision.reason);
+}
+```
+
+### 2. Python Installation
+
+```bash
+python -m pip install agentguard-sdk
+```
+
+#### Minimal Working Example
+```python
+import os
+from agentguard import AgentGuard, AgentGuardError
+
+guard = AgentGuard(
+    base_url=os.environ.get("AGENTGUARD_URL", "http://localhost:3001"),
+    api_key=os.environ["AGENTGUARD_API_KEY"],
+    timeout=5.0,
+)
+
+decision = guard.evaluate(
+    action="payment.create",
+    amount=25.0,
+    currency="INR",
+    tool="razorpay_payment",
+    agent_id="autonomous-shopper",
+)
+
+if decision.is_allowed:
+    print(f"Payment approved: {decision.request_id}")
+elif decision.is_held:
+    print(f"Requires human approval. ID: {decision.pending_approval_id}")
+else:
+    print(f"Payment blocked: {decision.reason}")
+```
+
+### 3. Fail-Closed Invariant & Error Handling
+
+Both SDKs guarantee fail-closed security. Network timeouts, gateway outages, or DNS failures never result in an accidental ALLOW. When using `guard.evaluateSafely()` (or `guard.evaluate_safely()`), errors return an authoritative `BLOCK` decision:
+- `decision.status === 'BLOCK'`
+- `decision.isAllowed === false`
+- `decision.reason` details the `FAIL_CLOSED` gateway condition.
+
+Specific error classes:
+- `AgentGuardAuthenticationError` (HTTP 401 - Invalid/revoked API key)
+- `AgentGuardForbiddenError` (HTTP 403 - Missing permissions)
+- `AgentGuardValidationError` (HTTP 400 - Malformed payload)
+- `AgentGuardNotFoundError` (HTTP 404 - Unknown approval or entity)
+- `AgentGuardTimeoutError` (Gateway request timed out)
+- `AgentGuardGatewayError` (HTTP 5xx or connection refused)
+
+---
+
+## 💳 Razorpay Merchant Integration (`examples/razorpay`)
+
+A complete merchant backend demonstrating pre-flight security evaluation, Razorpay test order creation, human approval resumption, and cryptographic signature verification.
+
+### Running the Example
+
+```bash
+cd examples/razorpay
+npm install
+cp .env.example .env
+npm run dev
+```
+
+### Configuration (`.env`)
+```bash
+PORT=4000
+AGENTGUARD_URL=http://localhost:3001
+AGENTGUARD_API_KEY=ag_live_<your_api_key>
+RAZORPAY_KEY_ID=rzp_test_<your_key_id>
+RAZORPAY_KEY_SECRET=<your_razorpay_secret>
+RAZORPAY_WEBHOOK_SECRET=<your_webhook_secret>
+```
+
+### End-to-End Payment Flow & Invariants:
+1. **Request Ingress**: Merchant backend validates payment schema (`POST /api/checkout`).
+2. **Pre-Flight Evaluation**: The SDK calls `agentguard.evaluate()` against the gateway.
+3. **ALLOW**: If within spending policy and prompt injection free, Razorpay order is created (`HTTP 201`).
+4. **HOLD**: If exceeding approval threshold, transaction is held (`HTTP 202`), issuing `pendingApprovalId`. Downstream Razorpay API is **never called** early.
+5. **Approval Resumption**: Operator approves in dashboard. The backend polls via `guard.waitForApproval()` or receives approval webhook, re-evaluates with single-use `serverAuthorizationToken`, and creates order.
+6. **BLOCK**: If limits exceeded or prompt injection detected, returns `HTTP 403`. Downstream Razorpay API is **never called**.
+7. **Signature Verification**: Payment completion verifies constant-time HMAC-SHA256 (`POST /api/verify`).
+8. **Webhook Idempotency**: Webhook events verify `X-Razorpay-Signature` HMAC (`POST /api/webhook`).
+
+---
+
 ## 🚢 Deployment Guide
 
 ### Option 1: Render Deployment (One-Click Blueprint)
@@ -318,40 +452,84 @@ AgentGuard includes a production-ready [`render.yaml`](render.yaml) specificatio
    - Next.js Analytics Dashboard web service
 4. Configure your `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` in the Render environment variables dashboard.
 
-### Option 2: Local Docker Compose (Full Stack Fallback)
+### Option 2: Self-Hosted Production VPS (Docker Compose)
 
-To run the entire multi-container production stack locally:
+AgentGuard is designed for 100% self-hosted operation on your own VPS with Docker Compose, zero telemetry, and zero third-party cloud lock-in.
 
+For the comprehensive guide covering prerequisites, Caddy/Nginx reverse proxy, automated HTTPS, database backup/restore, and emergency recovery, see **[docs/SELF_HOSTING.md](docs/SELF_HOSTING.md)**.
+
+**Quick VPS Launch:**
 ```bash
-docker compose up --build
-```
+# 1. Clone repository
+git clone https://github.com/altafpasha/agentguard.git /opt/agentguard
+cd /opt/agentguard
 
-This launches:
-- **PostgreSQL 16**: Port 54329 (with initialization schemas)
-- **AgentGuard Gateway**: Port 3001
-- **Next.js Dashboard**: Port 3000
+# 2. Configure production environment
+cp .env.example .env
+nano .env # Set strong POSTGRES_PASSWORD, PAYPAL credentials, and SEED_DEMO_DATA=false
+
+# 3. Launch Docker Compose stack
+docker compose up -d --build
+
+# 4. Initialize first Owner account
+# Navigate to http://<YOUR_VPS_IP>:3000/setup to register the initial Owner.
+# The setup route permanently locks upon completion.
+```
 
 ---
 
-## 📡 API Reference
+## 📡 API Reference & Documentation
 
-### 1. Ingress & Payment Execution
+### Interactive Swagger / OpenAPI Specification
+Full interactive documentation, request schemas, and test execution consoles are served via Fastify Swagger UI at:
+```
+http://localhost:3001/docs
+```
+For a detailed architectural deep-dive and sequence diagrams, refer to [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md).
+
+### 1. First-Run Setup & Authentication (RBAC)
+- `GET /api/v1/auth/setup-status`: Check whether the installation requires first-run setup (`setupRequired: boolean`).
+- `POST /api/v1/auth/setup-owner`: Transactionally create the initial `OWNER` account. Permanently locked once completed.
+- `POST /api/v1/auth/login`: Rate-limited authentication endpoint; sets secure HTTP-only session cookie and returns session token.
+- `POST /api/v1/auth/logout`: Revoke active session token.
+- `GET /api/v1/auth/me`: Authenticated profile check for current reviewer.
+
+### 2. Administrator User Management & Invitations
+- `GET /api/v1/users`: List all registered operators, roles, statuses, and last login timestamps (Owner/Admin only).
+- `POST /api/v1/users/invite`: Create single-use, 48-hour time-limited, SHA-256 hashed invitation link (Owner/Admin only).
+- `POST /api/v1/users/accept-invite`: Unauthenticated invitation acceptance endpoint; securely sets user credentials.
+- `PATCH /api/v1/users/:id/status`: Activate or deactivate an operator account. Enforces that the last active owner cannot be deactivated.
+- `PATCH /api/v1/users/:id/role`: Change operator role (`OWNER`, `ADMIN`, `ANALYST`). Enforces privilege rules and protects the last owner.
+- `POST /api/v1/users/:id/revoke-sessions`: Immediately terminate all active sessions for a target user.
+
+### 3. Integrations & Live Health Probing
+- `GET /api/v1/integrations/status`: Query live connection health and latency for AgentGuard Gateway, PostgreSQL, PayPal Sandbox, and OpenRouter with masked secrets.
+- `POST /api/v1/integrations/test/:id`: Execute an active live ping/probe against a specific integration (`gateway`, `postgres`, `paypal`, `openrouter`).
+
+### 4. Storefront & Real PayPal Checkout
+- `GET /api/v1/store/products`: Retrieve verified product catalog records from database.
+- `GET /api/v1/store/products/:id`: Get product details and stock status.
+- `POST /api/v1/store/checkout`: Authoritatively calculates total server-side (client prices rejected), enforces spending limits, scans for prompt injections, and creates PayPal Sandbox order with `approvalUrl`.
+- `POST /api/v1/store/orders/:orderId/capture`: Reconciles order against PayPal Orders v2 API and captures approved transaction.
+- `POST /api/v1/store/orders/:orderId/cancel`: Handles buyer checkout cancellation.
+- `GET /api/v1/store/orders`: List real persisted store orders and capture references.
+- `GET /api/v1/pricing/plans`: Retrieve transparent AgentGuard tiers and feature matrix.
+
+### 5. Ingress & Payment Execution
 - `POST /api/v1/payments/initiate`: Primary guarded entrypoint for AI agent payments.
 - `POST /api/v1/payments/orders`: Creates PayPal order without immediate capture.
 - `POST /api/v1/payments/orders/:orderId/capture`: Captures PayPal order with server authorization token verification.
 
-### 2. Human Approval & Reviewer Sessions
-- `POST /api/v1/auth/login`: Authenticate human reviewer and obtain Bearer session token.
-- `GET /api/v1/approvals`: List unexpired pending approvals requiring human review.
+### 6. Human Approval & Reviewer Sessions
+- `GET /api/v1/approvals/pending`: List unexpired pending approvals requiring human review.
 - `POST /api/v1/approvals/:id/approve`: Reviewer approves action; issues single-use authorization token.
 - `POST /api/v1/approvals/:id/reject`: Reviewer rejects action; permanently prohibits execution.
 
-### 3. Policy Management & Audit
+### 7. Policy Management & Audit Trail
 - `GET /api/v1/policies`: Retrieve active security policies and spend limits.
-- `POST /api/v1/policies/update`: Authenticated endpoint to update policy thresholds and merchant denylists.
+- `POST /api/v1/policies/update`: Authenticated endpoint (Owner/Admin only) to update policy thresholds and merchant denylists.
 - `GET /api/v1/audit/events`: Query immutable audit trail with pagination and filters.
-
----
+- `GET /api/v1/dashboard/overview`: Real database metrics (events evaluated, allowed, held, blocked, empty states).
 
 ## ⚠️ Known Limitations & Security Trade-Offs
 

@@ -1,0 +1,4 @@
+include README.md
+include LICENSE
+recursive-include agentguard *.py
+recursive-exclude tests *

@@ -21,8 +21,8 @@ for (const vp of viewports) {
     for (const p of pages) {
       test(`capture ${p.name} on ${vp.name}`, async ({ page }) => {
         await page.setViewportSize({ width: vp.width, height: vp.height });
-        await page.goto(p.url, { waitUntil: 'networkidle' });
-        await page.waitForTimeout(500);
+        await page.goto(p.url, { waitUntil: 'domcontentloaded' });
+        await page.waitForTimeout(600);
         await page.screenshot({
           path: `responsive-${p.name}-${vp.name}.png`,
           fullPage: true,

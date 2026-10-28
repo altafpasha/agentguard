@@ -134,6 +134,84 @@ export interface SystemHealthStatus {
 export interface ReviewerProfile {
   id: string;
   username: string;
-  role: string;
+  email?: string | null;
+  role: 'OWNER' | 'ADMIN' | 'ANALYST' | string;
   name: string;
+  status?: 'ACTIVE' | 'INACTIVE' | string;
+  lastLoginAt?: string | null;
+  createdAt?: string;
 }
+
+export interface IntegrationStatusItem {
+  id: string;
+  name: string;
+  category: 'core' | 'database' | 'payment' | 'ai';
+  isConfigured: boolean;
+  status: 'connected' | 'disconnected' | 'degraded' | 'not_configured';
+  lastCheckedAt: string;
+  latencyMs?: number;
+  errorMessage?: string;
+  details: Record<string, unknown>;
+  setupGuide: string;
+}
+
+export interface UserInviteResult {
+  inviteId: string;
+  inviteToken: string;
+  inviteUrl: string;
+  email: string;
+  role: string;
+  expiresAt: string;
+}
+
+export interface AuthSettings {
+  allowPublicSignup: boolean;
+  defaultUserRole: 'VIEWER' | 'EDITOR';
+  requireEmailVerification: boolean;
+  inviteOnly: boolean;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface InvitationRecord {
+  id: string;
+  email: string;
+  role: string;
+  expiresAt: string;
+  usedAt?: string | null;
+  revoked: boolean;
+  revokedAt?: string | null;
+  createdBy?: string | null;
+  createdAt: string;
+  status: 'PENDING' | 'ACCEPTED' | 'EXPIRED' | 'REVOKED';
+}
+
+export interface ApiKeyRecord {
+  id: string;
+  name: string;
+  keyPrefix: string;
+  permissions: string[];
+  environment: 'production' | 'staging' | 'development' | string;
+  workspaceId: string;
+  expiresAt?: string | null;
+  lastUsedAt?: string | null;
+  createdAt: string;
+  revoked: boolean;
+  revokedAt?: string | null;
+}
+
+export interface CreateApiKeyPayload {
+  name: string;
+  permissions?: string[];
+  environment?: string;
+  workspaceId?: string;
+  expiresInDays?: number;
+}
+
+export interface CreateApiKeyResult {
+  success: boolean;
+  apiKey: ApiKeyRecord;
+  secretKey: string;
+  message?: string;
+}
+

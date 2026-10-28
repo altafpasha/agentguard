@@ -15,10 +15,19 @@ import {
   Filter,
 } from 'lucide-react';
 import { Navigation } from '../../components/Navigation';
+import { AuthGuard } from '../../components/AuthGuard';
 import { fetchAuditEvents, fetchAuditByRequestId } from '../../lib/api';
 import { AuditRecord } from '../../types';
 
 export default function AuditExplorerPage() {
+  return (
+    <AuthGuard>
+      <AuditExplorerContent />
+    </AuthGuard>
+  );
+}
+
+function AuditExplorerContent() {
   const [events, setEvents] = useState<AuditRecord[]>([]);
   const [searchRequestId, setSearchRequestId] = useState('');
   const [selectedEvent, setSelectedEvent] = useState<AuditRecord | null>(null);
@@ -32,53 +41,13 @@ export default function AuditExplorerPage() {
       setEvents(res.events || []);
       if (res.events?.length > 0 && !selectedEvent) {
         setSelectedEvent(res.events[0]);
+      } else if (!res.events?.length) {
+        setSelectedEvent(null);
       }
     } catch {
-      // Fallback sample audit records if server clean
-      const samples: AuditRecord[] = [
-        {
-          id: 'audit-001',
-          requestId: 'req-8891-auth-pass',
-          agentId: 'agent-finance-01',
-          merchant: 'AWS Cloud Services',
-          amountFormatted: '$14.99',
-          currency: 'USD',
-          eventType: 'POLICY_APPROVED',
-          status: 'SUCCESS',
-          decision: 'ALLOW',
-          riskScore: 0.05,
-          decisionReasons: ['Amount within single transaction limit', 'Merchant not in denylist'],
-          paypalReference: 'SANDBOX_ORD_77182939',
-          payloadSummary: {
-            sanitized: true,
-            secretMasked: '[REDACTED]',
-            amount: 14.99,
-            currency: 'USD',
-          },
-          createdAt: new Date().toISOString(),
-        },
-        {
-          id: 'audit-002',
-          requestId: 'req-8892-dan-inject',
-          agentId: 'agent-rogue-prompt',
-          merchant: 'Unknown Recipient',
-          amountFormatted: '$99.00',
-          currency: 'USD',
-          eventType: 'INJECTION_BLOCKED',
-          status: 'BLOCKED',
-          decision: 'BLOCK',
-          riskScore: 0.98,
-          decisionReasons: ['Adversarial prompt injection detected: DAN jailbreak pattern override.'],
-          errorMessage: 'Blocked by Adversarial Injection Scanner: system prompt override attempt.',
-          payloadSummary: {
-            sanitized: true,
-            findings: ['DAN override detected in prompt context'],
-          },
-          createdAt: new Date(Date.now() - 25 * 60000).toISOString(),
-        },
-      ];
-      setEvents(samples);
-      setSelectedEvent(samples[0]);
+      // Honest empty state when no events exist or on error
+      setEvents([]);
+      setSelectedEvent(null);
     } finally {
       setIsLoading(false);
     }
@@ -156,7 +125,7 @@ export default function AuditExplorerPage() {
 
           <button
             onClick={loadAll}
-            className="w-full sm:w-auto px-5 py-2 rounded-full bg-[#121316] border border-white/[0.08] hover:border-white/20 text-xs font-semibold text-white transition-colors btn-press flex items-center justify-center"
+            className="w-full sm:w-auto px-5 py-2.5 rounded-full bg-[#121316] border border-white/[0.08] hover:border-white/20 text-xs font-semibold text-white transition-colors btn-press touch-manipulation min-h-[40px] flex items-center justify-center"
           >
             <span>Reset Filters</span>
           </button>

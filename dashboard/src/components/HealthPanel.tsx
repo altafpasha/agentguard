@@ -1,7 +1,8 @@
 'use client';
 
 import React from 'react';
-import { Server, Database, ShieldAlert, Cpu, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
+import Link from 'next/link';
+import { Server, Database, ShieldAlert, Cpu, CheckCircle2, AlertCircle, RefreshCw, ArrowUpRight } from 'lucide-react';
 import { SystemHealthStatus } from '../types';
 
 interface HealthPanelProps {
@@ -11,27 +12,20 @@ interface HealthPanelProps {
 }
 
 export function HealthPanel({ health, onRefresh, isLoading = false }: HealthPanelProps) {
-  const defaultHealth: SystemHealthStatus = {
-    gateway: { status: 'healthy', uptimeSeconds: 3600, version: '1.0.0' },
-    database: { status: 'connected' },
-    paypal: { environment: 'sandbox', liveExecutionAllowed: false, status: 'connected' },
-    openRouter: { status: 'active', model: 'anthropic/claude-3.5-sonnet' },
-  };
-
-  const current = health || defaultHealth;
-
-  const formatUptime = (seconds: number) => {
+  const formatUptime = (seconds?: number) => {
+    if (!seconds && seconds !== 0) return '0m';
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
-    return `${hrs}h ${mins}m`;
+    if (hrs > 0) return `${hrs}h ${mins}m`;
+    return `${mins}m`;
   };
 
   return (
-    <div className="bg-[#1C1E24] border border-white/[0.07] rounded-[22px] p-5 sm:p-6">
+    <div className="bg-[#222222] border border-white/[0.08] rounded-3xl p-5 sm:p-6 shadow-xl">
       {/* Header */}
       <div className="flex items-center justify-between gap-3 mb-4">
         <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 rounded-xl bg-white/[0.06] flex items-center justify-center text-[#D7FF70]">
+          <div className="w-8 h-8 rounded-xl bg-white/[0.06] flex items-center justify-center text-[#D7FF70]">
             <Server className="w-4 h-4" />
           </div>
           <div>
@@ -39,105 +33,134 @@ export function HealthPanel({ health, onRefresh, isLoading = false }: HealthPane
               Gateway Service Health
             </h3>
             <p className="text-[11px] text-[#8E929C]">
-              Continuous multi-tier health telemetry
+              Continuous connectivity &amp; runtime verification
             </p>
           </div>
         </div>
 
-        {onRefresh && (
-          <button
-            onClick={onRefresh}
-            disabled={isLoading}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#121316] border border-white/[0.08] hover:border-[#D7FF70]/50 text-xs text-[#8E929C] hover:text-[#D7FF70] transition-colors btn-press shadow-sm"
+        <div className="flex items-center gap-2">
+          <Link
+            href="/integrations"
+            className="flex items-center gap-1 text-xs font-semibold text-[#8E929C] hover:text-[#D7FF70] transition-colors pr-2 hidden sm:flex"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-[#D7FF70]' : ''}`} />
-            <span>Check Now</span>
-          </button>
-        )}
+            <span>All Integrations</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </Link>
+
+          {onRefresh && (
+            <button
+              onClick={onRefresh}
+              disabled={isLoading}
+              className="flex items-center justify-center gap-1.5 px-3.5 py-1.5 min-h-[36px] rounded-full bg-[#171717] border border-white/[0.08] hover:border-[#D7FF70]/50 text-xs text-[#8E929C] hover:text-[#D7FF70] transition-colors btn-press touch-manipulation shadow-sm"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${isLoading ? 'animate-spin text-[#D7FF70]' : ''}`} />
+              <span>Check</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Grid of 4 Health Status Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        {/* 1. Fastify Gateway */}
-        <div className="p-3.5 rounded-2xl bg-[#121316]/60 border border-white/[0.04] flex items-start justify-between">
-          <div className="space-y-1">
-            <span className="text-[10px] text-[#8E929C] uppercase tracking-wider font-semibold">
-              Gateway Core
-            </span>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-[#D7FF70] animate-pulse" />
-              <span className="text-xs font-bold text-white capitalize">
-                {current.gateway.status}
-              </span>
-            </div>
-            <p className="text-[10px] text-[#6E7380]">
-              Uptime: {formatUptime(current.gateway.uptimeSeconds)} (v{current.gateway.version})
-            </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-stretch">
+        {/* 1. Gateway */}
+        <div className="p-4 rounded-2xl bg-[#171717] border border-white/[0.04] space-y-2 flex flex-col justify-between h-full">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-[#8E929C]">Core Gateway</span>
+            <Cpu className="w-4 h-4 text-[#D7FF70]" />
           </div>
-          <Server className="w-4 h-4 text-[#8E929C]" />
+          <div className="flex items-center gap-2">
+            {health?.gateway?.status === 'healthy' ? (
+              <>
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="text-sm font-bold text-white">Online</span>
+              </>
+            ) : health?.gateway?.status === 'degraded' ? (
+              <>
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                <span className="text-sm font-bold text-amber-400">Degraded</span>
+              </>
+            ) : (
+              <>
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span className="text-sm font-bold text-rose-400">Unavailable</span>
+              </>
+            )}
+          </div>
+          <div className="text-[11px] text-[#8E929C] font-mono">
+            Uptime: {formatUptime(health?.gateway?.uptimeSeconds)} &bull; v{health?.gateway?.version || '1.0.0'}
+          </div>
         </div>
 
-        {/* 2. Audit & Postgres DB */}
-        <div className="p-3.5 rounded-2xl bg-[#121316]/60 border border-white/[0.04] flex items-start justify-between">
-          <div className="space-y-1">
-            <span className="text-[10px] text-[#8E929C] uppercase tracking-wider font-semibold">
-              Audit Database
-            </span>
-            <div className="flex items-center gap-1.5">
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  current.database.status === 'connected'
-                    ? 'bg-[#D7FF70]'
-                    : 'bg-[#FF6B6B]'
-                }`}
-              />
-              <span className="text-xs font-bold text-white capitalize">
-                {current.database.status}
-              </span>
-            </div>
-            <p className="text-[10px] text-[#6E7380]">
-              Drizzle ORM &bull; PostgreSQL 16
-            </p>
+        {/* 2. PostgreSQL */}
+        <div className="p-4 rounded-2xl bg-[#171717] border border-white/[0.04] space-y-2 flex flex-col justify-between h-full">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-[#8E929C]">Audit Database</span>
+            <Database className="w-4 h-4 text-[#8C7CFF]" />
           </div>
-          <Database className="w-4 h-4 text-[#8E929C]" />
+          <div className="flex items-center gap-2">
+            {health?.database?.status === 'connected' ? (
+              <>
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="text-sm font-bold text-white">Connected</span>
+              </>
+            ) : (
+              <>
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span className="text-sm font-bold text-rose-400">Disconnected</span>
+              </>
+            )}
+          </div>
+          <div className="text-[11px] text-[#8E929C]">
+            PostgreSQL 16 Durable Storage
+          </div>
         </div>
 
         {/* 3. PayPal Sandbox */}
-        <div className="p-3.5 rounded-2xl bg-[#121316]/60 border border-white/[0.04] flex items-start justify-between">
-          <div className="space-y-1">
-            <span className="text-[10px] text-[#8E929C] uppercase tracking-wider font-semibold">
-              PayPal Adapter
-            </span>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-[#D7FF70]" />
-              <span className="text-xs font-bold text-white capitalize">
-                Sandbox Ready
-              </span>
-            </div>
-            <p className="text-[10px] text-[#6E7380]">
-              Guarded Foundation Mode
-            </p>
+        <div className="p-4 rounded-2xl bg-[#171717] border border-white/[0.04] space-y-2 flex flex-col justify-between h-full">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-[#8E929C]">PayPal Sandbox</span>
+            <span className="w-2 h-2 rounded-full bg-[#38BDF8]" />
           </div>
-          <ShieldAlert className="w-4 h-4 text-[#8E929C]" />
+          <div className="flex items-center gap-2">
+            {health?.paypal?.status === 'connected' ? (
+              <>
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="text-sm font-bold text-white">Sandbox Active</span>
+              </>
+            ) : (
+              <>
+                <AlertCircle className="w-4 h-4 text-[#8E929C] shrink-0" />
+                <span className="text-sm font-bold text-[#8E929C]">Standby</span>
+              </>
+            )}
+          </div>
+          <div className="text-[11px] text-[#8E929C]">
+            Guarded Sandbox Mode (Live execution disabled)
+          </div>
         </div>
 
-        {/* 4. OpenRouter AI Provider */}
-        <div className="p-3.5 rounded-2xl bg-[#121316]/60 border border-white/[0.04] flex items-start justify-between">
-          <div className="space-y-1">
-            <span className="text-[10px] text-[#8E929C] uppercase tracking-wider font-semibold">
-              AI Risk Provider
-            </span>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-[#8C7CFF]" />
-              <span className="text-xs font-bold text-white capitalize">
-                Active Advisory
-              </span>
-            </div>
-            <p className="text-[10px] text-[#6E7380] truncate max-w-[150px]">
-              {current.openRouter.model.split('/')[1] || current.openRouter.model}
-            </p>
+        {/* 4. OpenRouter AI */}
+        <div className="p-4 rounded-2xl bg-[#171717] border border-white/[0.04] space-y-2 flex flex-col justify-between h-full">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-[#8E929C]">OpenRouter LLM</span>
+            <span className="w-2 h-2 rounded-full bg-[#F472B6]" />
           </div>
-          <Cpu className="w-4 h-4 text-[#8E929C]" />
+          <div className="flex items-center gap-2">
+            {health?.openRouter?.status === 'active' ? (
+              <>
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="text-sm font-bold text-white">Connected</span>
+              </>
+            ) : (
+              <>
+                <AlertCircle className="w-4 h-4 text-[#8E929C] shrink-0" />
+                <span className="text-sm font-bold text-[#8E929C]">Standby</span>
+              </>
+            )}
+          </div>
+          <div className="text-[11px] text-[#8E929C] truncate">
+            {health?.openRouter?.model || 'claude-3.5-sonnet'}
+          </div>
         </div>
       </div>
     </div>

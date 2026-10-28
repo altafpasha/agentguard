@@ -25,10 +25,10 @@ export function MetricCard({
 }: MetricCardProps) {
   const CardContent = (
     <div
-      className={`relative w-full p-5 lg:p-6 rounded-[22px] transition-all duration-200 group flex flex-col justify-between min-h-[145px] sm:min-h-[155px] ${
+      className={`relative w-full h-full p-5 lg:p-6 rounded-3xl transition-all duration-200 group flex flex-col justify-between min-h-[145px] sm:min-h-[155px] ${
         isLimeHighlight
           ? 'bg-[#D7FF70] text-[#0E1400] shadow-[0_10px_30px_rgba(215,255,112,0.22)] border border-[#E3FFA8] hover:-translate-y-1'
-          : 'bg-[#1C1E24] text-white border border-white/[0.08] hover:border-white/[0.18] hover:bg-[#20232A] hover:-translate-y-1 shadow-[0_4px_20px_rgba(0,0,0,0.35)]'
+          : 'bg-[#222222] text-white border border-white/[0.08] hover:border-white/[0.18] hover:bg-[#282828] hover:-translate-y-1 shadow-lg'
       }`}
     >
       {/* Top Header Row */}
@@ -96,7 +96,7 @@ export function MetricCard({
 
   if (href) {
     return (
-      <Link href={href} className="block focus:outline-none focus:ring-2 focus:ring-[#D7FF70] rounded-[22px]">
+      <Link href={href} className="block h-full focus:outline-none focus:ring-2 focus:ring-[#D7FF70] rounded-[22px]">
         {CardContent}
       </Link>
     );

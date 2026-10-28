@@ -46,9 +46,33 @@ export class HackathonScenarioRunner {
   private gatewayUrl: string;
   private agent: ScriptedShoppingAgent;
 
+  private cachedToken: string = '';
+
   constructor(gatewayUrl = 'http://127.0.0.1:3001') {
     this.gatewayUrl = gatewayUrl.replace(/\/+$/, '');
     this.agent = new ScriptedShoppingAgent({ gatewayBaseUrl: this.gatewayUrl });
+  }
+
+  private async getAuthToken(): Promise<string> {
+    if (this.cachedToken) return this.cachedToken;
+    try {
+      const loginRes = await fetch(`${this.gatewayUrl}/api/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: 'security_admin',
+          password: 'ChangeMeNow123!',
+        }),
+      });
+      if (loginRes.ok) {
+        const loginData = (await loginRes.json()) as { sessionToken?: string };
+        if (loginData.sessionToken) {
+          this.cachedToken = loginData.sessionToken;
+          return this.cachedToken;
+        }
+      }
+    } catch {}
+    return '';
   }
 
   /**
@@ -56,7 +80,12 @@ export class HackathonScenarioRunner {
    */
   private async getAuditEvents(limit = 20): Promise<Array<Record<string, unknown>>> {
     try {
-      const res = await fetch(`${this.gatewayUrl}/api/v1/audit/events?limit=${limit}`);
+      const token = await this.getAuthToken();
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const res = await fetch(`${this.gatewayUrl}/api/v1/audit/events?limit=${limit}`, { headers });
       if (res.ok) {
         const body = (await res.json()) as { events?: Array<Record<string, unknown>> };
         return body.events || [];

@@ -13,7 +13,7 @@ describe('Config Module', () => {
     expect(config.HOST).toBe('0.0.0.0');
     expect(config.NODE_ENV).toBe('test');
     expect(config.POLICY_MAX_TRANSACTION_AMOUNT).toBe(50.0);
-    expect(config.POLICY_ALLOWED_CURRENCIES).toEqual(['USD', 'EUR', 'GBP']);
+    expect(config.POLICY_ALLOWED_CURRENCIES).toEqual(['USD', 'EUR', 'GBP', 'INR']);
   });
 
   it('fails fast on invalid port', () => {

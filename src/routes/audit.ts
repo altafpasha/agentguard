@@ -1,21 +1,26 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { IAuditRepository } from '../audit';
 import { NotFoundError } from '../common/errors';
+import { IReviewerAuthService } from '../auth/service';
+import { createReviewerAuthHook } from '../auth/middleware';
 
 export interface AuditRouteOptions {
   auditRepo: IAuditRepository;
+  authService?: IReviewerAuthService;
 }
 
 export const auditRoutes: FastifyPluginAsync<AuditRouteOptions> = async (
   fastify: FastifyInstance,
   options: AuditRouteOptions
 ) => {
-  const { auditRepo } = options;
+  const { auditRepo, authService } = options;
+  const requireAuth = authService ? createReviewerAuthHook(authService) : null;
+  const authHook = requireAuth ? [requireAuth] : [];
 
   /**
    * List recent audit events with optional search, limit, and status filters
    */
-  fastify.get('/api/v1/audit/events', async (req, reply) => {
+  fastify.get('/api/v1/audit/events', { preHandler: authHook }, async (req, reply) => {
     const query = req.query as {
       limit?: string;
       status?: string;
@@ -70,7 +75,7 @@ export const auditRoutes: FastifyPluginAsync<AuditRouteOptions> = async (
   /**
    * Aggregated dashboard overview metrics computed strictly from real audit records
    */
-  fastify.get('/api/v1/dashboard/overview', async (_req, reply) => {
+  fastify.get('/api/v1/dashboard/overview', { preHandler: authHook }, async (_req, reply) => {
     const events = await auditRepo.getAllEvents(1000);
 
     const totalMonitored = events.length;
@@ -131,42 +136,61 @@ export const auditRoutes: FastifyPluginAsync<AuditRouteOptions> = async (
       }
     }
 
-    const averageRiskScore = riskScoreCount > 0 ? Number((riskScoreSum / riskScoreCount).toFixed(2)) : 0.12;
+    const averageRiskScore = riskScoreCount > 0 ? Number((riskScoreSum / riskScoreCount).toFixed(2)) : 0;
 
-    const threatDistribution = Object.entries(threatCategories).map(([category, count]) => ({
-      category,
-      count,
-      percentage: blockedCount > 0 ? Math.round((count / blockedCount) * 100) : 0,
+    const threatDistribution = blockedCount > 0
+      ? Object.entries(threatCategories)
+          .filter(([_, count]) => count > 0)
+          .map(([category, count]) => ({
+            category,
+            count,
+            percentage: Math.round((count / blockedCount) * 100),
+          }))
+      : [];
+
+    // Compute monthly aggregation from actual event timestamps
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthlyMap = new Map<string, { allowed: number; held: number; blocked: number }>();
+
+    for (const ev of events) {
+      if (!ev.createdAt) continue;
+      const date = new Date(ev.createdAt);
+      const monthIdx = date.getMonth();
+      const monthKey = monthNames[monthIdx] ?? 'Unknown';
+      const current = monthlyMap.get(monthKey) || { allowed: 0, held: 0, blocked: 0 };
+      const dec = (ev.decision || ev.policyDecision || '').toUpperCase();
+      const st = (ev.status || '').toUpperCase();
+      if (dec === 'ALLOW' || st === 'SUCCESS') current.allowed++;
+      else if (dec === 'HOLD' || st === 'PENDING_APPROVAL') current.held++;
+      else if (dec === 'BLOCK' || st === 'BLOCKED') current.blocked++;
+      monthlyMap.set(monthKey, current);
+    }
+
+    const monthlyActivity = Array.from(monthlyMap.entries()).map(([month, data]) => ({
+      month,
+      allowed: data.allowed,
+      held: data.held,
+      blocked: data.blocked,
     }));
 
-    // Monthly volume breakdown inspired by reference chart
-    const monthlyActivity = [
-      { month: 'Jan', allowed: Math.max(12, Math.round(allowedCount * 0.1)), held: 1, blocked: Math.max(2, Math.round(blockedCount * 0.1)) },
-      { month: 'Feb', allowed: Math.max(18, Math.round(allowedCount * 0.15)), held: 2, blocked: Math.max(4, Math.round(blockedCount * 0.15)) },
-      { month: 'Mar', allowed: Math.max(25, Math.round(allowedCount * 0.2)), held: 3, blocked: Math.max(6, Math.round(blockedCount * 0.2)) },
-      { month: 'Apr', allowed: Math.max(42, Math.round(allowedCount * 0.35)), held: Math.max(4, heldCount), blocked: Math.max(9, Math.round(blockedCount * 0.35)), active: true, value: '379,502', change: '+12.8%' },
-      { month: 'May', allowed: Math.max(20, Math.round(allowedCount * 0.12)), held: 1, blocked: Math.max(3, Math.round(blockedCount * 0.12)) },
-      { month: 'Jun', allowed: Math.max(15, Math.round(allowedCount * 0.08)), held: 2, blocked: Math.max(2, Math.round(blockedCount * 0.08)) },
-    ];
-
     return reply.status(200).send({
-      totalMonitored: Math.max(totalMonitored, 975124),
-      allowedCount: Math.max(allowedCount, 602569),
-      blockedThreats: Math.max(blockedCount, 296241),
+      totalMonitored,
+      allowedCount,
+      blockedThreats: blockedCount,
       pendingApprovals: heldCount,
       totalSandboxSpendFormatted: `$${(Number(totalSandboxCents) / 100).toFixed(2)}`,
       totalAttemptedSpendFormatted: `$${(Number(attemptedCents) / 100).toFixed(2)}`,
       averageRiskScore,
       threatDistribution,
       monthlyActivity,
-      recentEvents: events.slice(0, 15).map((e) => ({
+      recentEvents: events.slice(0, 50).map((e) => ({
         ...e,
         amountCents: e.amountCents ? e.amountCents.toString() : null,
       })),
     });
   });
 
-  fastify.get('/api/v1/audit/:requestId', async (req, reply) => {
+  fastify.get('/api/v1/audit/:requestId', { preHandler: authHook }, async (req, reply) => {
     const { requestId } = req.params as { requestId: string };
     const events = await auditRepo.getEventsByRequestId(requestId);
 
@@ -184,7 +208,7 @@ export const auditRoutes: FastifyPluginAsync<AuditRouteOptions> = async (
     });
   });
 
-  fastify.get('/api/v1/audit/agent/:agentId', async (req, reply) => {
+  fastify.get('/api/v1/audit/agent/:agentId', { preHandler: authHook }, async (req, reply) => {
     const { agentId } = req.params as { agentId: string };
     const limit = Number((req.query as { limit?: string }).limit ?? 50);
     const events = await auditRepo.getEventsByAgentId(agentId, limit);

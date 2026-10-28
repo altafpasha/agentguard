@@ -71,6 +71,15 @@ export class UnauthorizedError extends AppError {
 }
 
 /**
+ * Access forbidden or permission denied (403)
+ */
+export class ForbiddenError extends AppError {
+  constructor(message = 'Access forbidden: Insufficient permissions', details?: unknown) {
+    super(message, 403, 'FORBIDDEN', details);
+  }
+}
+
+/**
  * State conflict or duplicate action (409)
  */
 export class ConflictError extends AppError {

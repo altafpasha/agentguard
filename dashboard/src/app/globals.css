@@ -92,10 +92,26 @@ body {
 
 /* Interactive button tap feedback */
 .btn-press {
-  transition: transform 0.1s ease, background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  touch-manipulation: manipulation;
+  transition: transform 0.1s ease, background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
 }
 .btn-press:active {
   transform: scale(0.97);
+}
+.btn-press:focus-visible {
+  outline: 2px solid #D7FF70;
+  outline-offset: 2px;
+}
+
+/* Touch-friendly target helpers */
+.touch-target {
+  min-height: 44px;
+  touch-manipulation: manipulation;
+}
+
+.touch-target-sm {
+  min-height: 38px;
+  touch-manipulation: manipulation;
 }
 
 .card-surface {
@@ -104,4 +120,19 @@ body {
   border-radius: 22px;
   box-shadow: 0 4px 24px -2px rgba(0, 0, 0, 0.4);
 }
+
+/* Responsive Desktop Sidebar Layout Offsets */
+@media (min-width: 1280px) {
+  body[data-sidebar="expanded"] main {
+    margin-left: 17rem; /* 272px */
+    max-width: calc(100vw - 18.5rem);
+    transition: margin-left 0.2s cubic-bezier(0.16, 1, 0.3, 1), max-width 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  body[data-sidebar="collapsed"] main {
+    margin-left: 4.75rem; /* 76px */
+    max-width: calc(100vw - 6rem);
+    transition: margin-left 0.2s cubic-bezier(0.16, 1, 0.3, 1), max-width 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
 

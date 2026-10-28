@@ -7,7 +7,7 @@ import { ValidationError } from '../common/errors';
 import { IRiskAnalyzerProvider, RiskDecisionEngine } from '../ai';
 
 import { IReviewerAuthService } from '../auth/service';
-import { createReviewerAuthHook } from '../auth/middleware';
+import { createReviewerAuthHook, createRoleAuthHook } from '../auth/middleware';
 
 export interface PolicyRouteOptions {
   policyEngine: PolicyEngine;
@@ -32,6 +32,7 @@ export const policyRoutes: FastifyPluginAsync<PolicyRouteOptions> = async (
   } = options;
 
   const requireAuth = authService ? createReviewerAuthHook(authService) : null;
+  const requireAdminOrOwner = authService ? createRoleAuthHook(['OWNER', 'ADMIN']) : null;
 
   fastify.post('/api/v1/evaluate-policy', async (req, reply) => {
     const parseResult = policyEvaluationRequestSchema.safeParse(req.body);
@@ -177,8 +178,24 @@ export const policyRoutes: FastifyPluginAsync<PolicyRouteOptions> = async (
   /**
    * Version History for Policies
    */
-  fastify.get('/api/v1/policies/history/:policyId', async (req, reply) => {
+  fastify.get('/api/v1/policies/history/:policyId', { preHandler: requireAuth ? [requireAuth] : [] }, async (req, reply) => {
     const { policyId } = req.params as { policyId: string };
+    const history = await policyEngine.getPolicyStore().getPolicyHistory(policyId);
+
+    return reply.status(200).send({
+      policyId,
+      versionsCount: history.length,
+      history: history.map((p) => ({
+        ...p,
+        maxAmountCents: p.maxAmountCents.toString(),
+        maxDailyAmountCents: p.maxDailyAmountCents.toString(),
+        approvalThresholdCents: p.approvalThresholdCents.toString(),
+      })),
+    });
+  });
+
+  fastify.get('/api/v1/policies/history', { preHandler: requireAuth ? [requireAuth] : [] }, async (req, reply) => {
+    const policyId = (req.query as { policyId?: string })?.policyId || 'default';
     const history = await policyEngine.getPolicyStore().getPolicyHistory(policyId);
 
     return reply.status(200).send({
@@ -196,7 +213,7 @@ export const policyRoutes: FastifyPluginAsync<PolicyRouteOptions> = async (
   /**
    * Get Active Policy
    */
-  fastify.get('/api/v1/policies/active', async (req, reply) => {
+  fastify.get('/api/v1/policies/active', { preHandler: requireAuth ? [requireAuth] : [] }, async (req, reply) => {
     const policyId = (req.query as { policyId?: string })?.policyId || 'default';
     const store = policyEngine.getPolicyStore();
     let active = await store.getActivePolicy(policyId);
@@ -238,7 +255,7 @@ export const policyRoutes: FastifyPluginAsync<PolicyRouteOptions> = async (
    */
   fastify.post(
     '/api/v1/policies/update',
-    { preHandler: requireAuth ? [requireAuth] : [] },
+    { preHandler: requireAuth && requireAdminOrOwner ? [requireAuth, requireAdminOrOwner] : requireAuth ? [requireAuth] : [] },
     async (req, reply) => {
     const body = req.body as {
       policyId?: string;

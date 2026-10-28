@@ -1,21 +1,25 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { HumanApprovalService } from '../approval/service';
 import { IReviewerAuthService } from '../auth/service';
-import { createReviewerAuthHook } from '../auth/middleware';
+import { IApiKeyService } from '../auth/api-key-service';
+import { createReviewerAuthHook, createRoleAuthHook, createDualAuthHook } from '../auth/middleware';
 import { rejectApprovalRequestSchema } from './schemas';
 import { ValidationError, NotFoundError } from '../common/errors';
 
 export interface ApprovalRouteOptions {
   approvalService: HumanApprovalService;
   authService: IReviewerAuthService;
+  apiKeyService?: IApiKeyService;
 }
 
 export const approvalRoutes: FastifyPluginAsync<ApprovalRouteOptions> = async (
   fastify: FastifyInstance,
   options: ApprovalRouteOptions
 ) => {
-  const { approvalService, authService } = options;
+  const { approvalService, authService, apiKeyService } = options;
   const requireAuth = createReviewerAuthHook(authService);
+  const requireEditorOrAbove = createRoleAuthHook(['EDITOR']);
+  const readApprovalAuth = createDualAuthHook(authService, apiKeyService);
 
   /**
    * List all pending actions awaiting human review
@@ -36,11 +40,11 @@ export const approvalRoutes: FastifyPluginAsync<ApprovalRouteOptions> = async (
   );
 
   /**
-   * Get single pending approval record by ID
+   * Get single pending approval record by ID (Accessible by reviewers and SDK API keys)
    */
   fastify.get(
     '/api/v1/approvals/:id',
-    { preHandler: [requireAuth] },
+    { preHandler: [readApprovalAuth] },
     async (req, reply) => {
       const { id } = req.params as { id: string };
       const record = await approvalService.getPendingApprovalById(id);
@@ -58,10 +62,11 @@ export const approvalRoutes: FastifyPluginAsync<ApprovalRouteOptions> = async (
   /**
    * Authenticated reviewer approves a pending action.
    * Enforces atomic update, revalidates constraints, and issues short-lived single-use authorization token.
+   * Requires EDITOR, ADMIN, or OWNER role. (Viewers cannot perform write operations).
    */
   fastify.post(
     '/api/v1/approvals/:id/approve',
-    { preHandler: [requireAuth] },
+    { preHandler: [requireAuth, requireEditorOrAbove] },
     async (req, reply) => {
       const { id } = req.params as { id: string };
       const reviewer = req.reviewer!;
@@ -85,10 +90,11 @@ export const approvalRoutes: FastifyPluginAsync<ApprovalRouteOptions> = async (
 
   /**
    * Authenticated reviewer rejects a pending action.
+   * Requires EDITOR, ADMIN, or OWNER role. (Viewers cannot perform write operations).
    */
   fastify.post(
     '/api/v1/approvals/:id/reject',
-    { preHandler: [requireAuth] },
+    { preHandler: [requireAuth, requireEditorOrAbove] },
     async (req, reply) => {
       const { id } = req.params as { id: string };
       const reviewer = req.reviewer!;

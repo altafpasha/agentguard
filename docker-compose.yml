@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-agentguard_dev}
     ports:
-      - "${POSTGRES_PORT:-54329}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-54329}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./src/audit/schema.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -33,6 +33,7 @@ services:
       PORT: 3001
       HOST: 0.0.0.0
       LOG_LEVEL: info
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-agentguard_dev}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-sk-or-v1-placeholder}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-3.5-sonnet}
@@ -45,9 +46,13 @@ services:
       PAYPAL_TIMEOUT_MS: ${PAYPAL_TIMEOUT_MS:-10000}
       POLICY_MAX_TRANSACTION_AMOUNT: ${POLICY_MAX_TRANSACTION_AMOUNT:-50.00}
       POLICY_MAX_DAILY_AMOUNT: ${POLICY_MAX_DAILY_AMOUNT:-200.00}
-      POLICY_ALLOWED_CURRENCIES: ${POLICY_ALLOWED_CURRENCIES:-USD,EUR,GBP}
+      POLICY_ALLOWED_CURRENCIES: ${POLICY_ALLOWED_CURRENCIES:-USD,EUR,GBP,INR}
       POLICY_REQUIRE_HUMAN_APPROVAL_THRESHOLD: ${POLICY_REQUIRE_HUMAN_APPROVAL_THRESHOLD:-25.00}
       POLICY_RECIPIENT_DENYLIST: ${POLICY_RECIPIENT_DENYLIST:-}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-rzp_test_placeholder_key_id}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-placeholder_secret}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-placeholder_webhook_secret}
+      RAZORPAY_ALLOW_LIVE_EXECUTION: ${RAZORPAY_ALLOW_LIVE_EXECUTION:-false}
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3001/health || exit 1"]
       interval: 15s
@@ -69,6 +74,7 @@ services:
       - "${DASHBOARD_PORT:-3000}:3000"
     environment:
       NODE_ENV: production
+      AGENTGUARD_API_URL: "http://agentguard:3001"
       NEXT_PUBLIC_GATEWAY_URL: "http://localhost:${GATEWAY_PORT:-3001}"
     depends_on:
       agentguard:

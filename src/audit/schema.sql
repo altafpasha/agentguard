@@ -16,9 +16,10 @@ CREATE TABLE IF NOT EXISTS audit_events (
     decision VARCHAR(32),
     decision_reasons JSONB DEFAULT '[]'::jsonb,
     approval_state VARCHAR(32) DEFAULT 'NONE',
-    paypal_reference VARCHAR(128),
     event_type VARCHAR(64) NOT NULL,
     status VARCHAR(32) NOT NULL,
+    risk_score REAL,
+    policy_decision VARCHAR(32),
     payload_summary JSONB,
     error_message TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -102,12 +103,20 @@ CREATE INDEX IF NOT EXISTS idx_velocity_agent_time ON transaction_velocity(agent
 CREATE TABLE IF NOT EXISTS reviewers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username VARCHAR(64) NOT NULL UNIQUE,
+    email VARCHAR(255) UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     salt VARCHAR(64) NOT NULL,
-    role VARCHAR(64) NOT NULL DEFAULT 'REVIEWER',
+    role VARCHAR(64) NOT NULL DEFAULT 'ANALYST',
     name VARCHAR(128) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
+    last_login_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE reviewers ADD COLUMN IF NOT EXISTS email VARCHAR(255);
+ALTER TABLE reviewers ADD COLUMN IF NOT EXISTS status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE';
+ALTER TABLE reviewers ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reviewers_email ON reviewers(email);
 
 CREATE TABLE IF NOT EXISTS reviewer_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -122,6 +131,20 @@ CREATE TABLE IF NOT EXISTS reviewer_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_reviewer_sessions_token ON reviewer_sessions(session_token_hash);
 CREATE INDEX IF NOT EXISTS idx_reviewer_sessions_reviewer_id ON reviewer_sessions(reviewer_id);
+
+CREATE TABLE IF NOT EXISTS user_invitations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) NOT NULL,
+    role VARCHAR(32) NOT NULL DEFAULT 'ANALYST',
+    token_hash VARCHAR(64) NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ,
+    created_by UUID REFERENCES reviewers(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_invitations_token ON user_invitations(token_hash);
+CREATE INDEX IF NOT EXISTS idx_user_invitations_email ON user_invitations(email);
 
 -- 7. Pending Human Approvals
 CREATE TABLE IF NOT EXISTS pending_approvals (

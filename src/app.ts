@@ -8,6 +8,8 @@ import { InjectionScanner, defaultScanner } from './scanner';
 import { PolicyEngine } from './policy';
 import { IAuditRepository, PostgresAuditRepository } from './audit';
 import { IPayPalSandboxAdapter, PayPalSandboxAdapter } from './payment';
+import fastifySwagger from '@fastify/swagger';
+import fastifySwaggerUi from '@fastify/swagger-ui';
 import {
   healthRoutes,
   scanRoutes,
@@ -15,13 +17,23 @@ import {
   paymentRoutes,
   auditRoutes,
   authRoutes,
+  userRoutes,
+  integrationRoutes,
   approvalRoutes,
+  storeRoutes,
+  razorpayRoutes,
+  scenariosRoutes,
+  apiKeyRoutes,
+  evaluateRoutes,
 } from './routes';
 import { IRiskAnalyzerProvider, OpenRouterRiskAnalyzer } from './ai';
 import { IReviewerAuthService, PostgresReviewerAuthService, MemoryReviewerAuthService } from './auth';
+import { IApiKeyService, PostgresApiKeyService, MemoryApiKeyService } from './auth/api-key-service';
 import { HumanApprovalService, PostgresApprovalStore, MemoryApprovalStore } from './approval';
 import { MemoryAuditRepository } from './audit/memory-audit-repo';
 import { seedInitialData } from './common/seed';
+import { IStoreRepository, PostgresStoreRepository, MemoryStoreRepository } from './store';
+import { IRazorpayAdapter, RazorpayAdapter } from './payment/razorpay-client';
 
 export interface AppDependencies {
   config?: EnvConfig;
@@ -29,9 +41,12 @@ export interface AppDependencies {
   policyEngine?: PolicyEngine;
   auditRepo?: IAuditRepository;
   paymentAdapter?: IPayPalSandboxAdapter;
+  razorpayAdapter?: IRazorpayAdapter;
   aiRiskAnalyzer?: IRiskAnalyzerProvider;
   authService?: IReviewerAuthService;
+  apiKeyService?: IApiKeyService;
   approvalService?: HumanApprovalService;
+  storeRepo?: IStoreRepository;
 }
 
 export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
@@ -49,12 +64,60 @@ export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
     },
   });
 
+  // Allow empty JSON bodies gracefully without throwing FST_ERR_CTP_EMPTY_JSON_BODY
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+    if (!body || (typeof body === 'string' && body.trim().length === 0)) {
+      return done(null, {});
+    }
+    try {
+      const json = JSON.parse(body as string);
+      done(null, json);
+    } catch (err) {
+      done(err as Error, undefined);
+    }
+  });
+
   // Register CORS
   app.register(cors, {
     origin: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'X-Reviewer-Token'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'X-Reviewer-Token', 'X-API-Key'],
     exposedHeaders: ['X-Request-Id'],
+  });
+
+  // Register OpenAPI / Swagger Documentation
+  app.register(fastifySwagger, {
+    openapi: {
+      info: {
+        title: 'AgentGuard Security Gateway API',
+        description: 'Autonomous AI-Agent Security Gateway & Deterministic Policy Enforcement for PayPal Transactions',
+        version: '1.0.0',
+        contact: {
+          name: 'AgentGuard Security Team',
+          url: 'https://github.com/altafpasha/agentguard',
+        },
+      },
+      servers: [
+        { url: `http://localhost:${config.PORT}`, description: 'Local Gateway' },
+      ],
+      tags: [
+        { name: 'Storefront', description: 'Storefront catalog, server-calculated checkout, and PayPal order return verification' },
+        { name: 'Payments', description: 'Guarded payment initiation, sandbox order creation, and capture' },
+        { name: 'Approvals', description: 'Human-in-the-Loop review queue, token issuance, and replay protection' },
+        { name: 'Policies', description: 'Deterministic policy limits, daily spend caps, and merchant allow/denylists' },
+        { name: 'Audit', description: 'Tamper-evident forensic audit logs and event search' },
+        { name: 'Health', description: 'System health and sandbox readiness check' },
+      ],
+    },
+  });
+
+  app.register(fastifySwaggerUi, {
+    routePrefix: '/docs',
+    uiConfig: {
+      docExpansion: 'list',
+      deepLinking: false,
+    },
+    staticCSP: true,
   });
 
   // Security Headers and Request ID Echo Hook
@@ -88,6 +151,12 @@ export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
       ? new MemoryReviewerAuthService()
       : new PostgresReviewerAuthService(config.DATABASE_URL));
 
+  const apiKeyService =
+    dependencies.apiKeyService ??
+    (isTestOrMemory
+      ? new MemoryApiKeyService()
+      : new PostgresApiKeyService(config.DATABASE_URL));
+
   const approvalService =
     dependencies.approvalService ??
     new HumanApprovalService({
@@ -100,6 +169,12 @@ export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
 
   // Wire approval store to policyEngine so threshold evaluation validates tokens directly
   policyEngine.setApprovalStore(approvalService.getStore());
+
+  const storeRepo =
+    dependencies.storeRepo ??
+    (isTestOrMemory
+      ? new MemoryStoreRepository()
+      : new PostgresStoreRepository(config.DATABASE_URL));
 
   const paymentAdapter =
     dependencies.paymentAdapter ??
@@ -116,6 +191,15 @@ export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
       approvalService
     );
 
+  const razorpayAdapter =
+    dependencies.razorpayAdapter ??
+    new RazorpayAdapter({
+      keyId: config.RAZORPAY_KEY_ID,
+      keySecret: config.RAZORPAY_KEY_SECRET,
+      webhookSecret: config.RAZORPAY_WEBHOOK_SECRET,
+      allowLiveExecution: config.RAZORPAY_ALLOW_LIVE_EXECUTION,
+    });
+
   const aiRiskAnalyzer =
     dependencies.aiRiskAnalyzer ??
     new OpenRouterRiskAnalyzer({
@@ -128,8 +212,9 @@ export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
       rateLimitRpm: config.OPENROUTER_RATE_LIMIT_RPM,
     });
 
-  // Seed demo data for development and live dashboard when not running vitest
-  if (config.NODE_ENV !== 'test') {
+  // Only seed sample demo data when explicitly enabled via SEED_DEMO_DATA=true.
+  // In self-hosted production installations, the system begins clean with no precreated users or fake events.
+  if (process.env.SEED_DEMO_DATA === 'true') {
     void seedInitialData(auditRepo, approvalService, authService).catch(() => {});
   }
 
@@ -202,10 +287,17 @@ export function buildApp(dependencies: AppDependencies = {}): FastifyInstance {
   app.register(healthRoutes, { auditRepo });
   app.register(scanRoutes, { scanner, auditRepo });
   app.register(authRoutes, { authService });
-  app.register(approvalRoutes, { approvalService, authService });
+  app.register(userRoutes, { authService, auditRepo });
+  app.register(integrationRoutes, { config, auditRepo, authService });
+  app.register(approvalRoutes, { approvalService, authService, apiKeyService });
+  app.register(apiKeyRoutes, { apiKeyService, authService, auditRepo });
+  app.register(evaluateRoutes, { policyEngine, auditRepo, approvalService, apiKeyService, authService, scanner });
   app.register(policyRoutes, { policyEngine, auditRepo, aiRiskAnalyzer, approvalService, authService });
   app.register(paymentRoutes, { scanner, policyEngine, paymentAdapter, auditRepo, approvalService });
-  app.register(auditRoutes, { auditRepo });
+  app.register(razorpayRoutes, { config, policyEngine, auditRepo, approvalService, razorpayAdapter });
+  app.register(scenariosRoutes, { config, scanner, policyEngine, auditRepo, approvalService });
+  app.register(auditRoutes, { auditRepo, authService });
+  app.register(storeRoutes, { storeRepo, scanner, policyEngine, paymentAdapter, auditRepo, approvalService });
 
   return app;
 }

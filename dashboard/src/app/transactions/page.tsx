@@ -18,10 +18,19 @@ import {
   Eye,
 } from 'lucide-react';
 import { Navigation } from '../../components/Navigation';
+import { AuthGuard } from '../../components/AuthGuard';
 import { fetchAuditEvents } from '../../lib/api';
 import { AuditRecord } from '../../types';
 
 export default function TransactionsPage() {
+  return (
+    <AuthGuard>
+      <TransactionsContent />
+    </AuthGuard>
+  );
+}
+
+function TransactionsContent() {
   const [events, setEvents] = useState<AuditRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -38,54 +47,8 @@ export default function TransactionsPage() {
       });
       setEvents(res.events || []);
     } catch {
-      // Fallback sample data if backend empty
-      if (events.length === 0) {
-        setEvents([
-          {
-            id: 'ev-01',
-            requestId: 'req-prod-001',
-            agentId: 'agent-finance-01',
-            merchant: 'AWS Cloud Services',
-            amountFormatted: '$14.99',
-            currency: 'USD',
-            decision: 'ALLOW',
-            status: 'SUCCESS',
-            eventType: 'POLICY_APPROVED',
-            riskScore: 0.05,
-            decisionReasons: ['Transaction amount within $50.00 policy cap', 'Merchant verified'],
-            createdAt: new Date().toISOString(),
-          },
-          {
-            id: 'ev-02',
-            requestId: 'req-prod-002',
-            agentId: 'agent-procure-hitl',
-            merchant: 'Enterprise SaaS Vendor',
-            amountFormatted: '$35.00',
-            currency: 'USD',
-            decision: 'HOLD',
-            status: 'PENDING_APPROVAL',
-            eventType: 'APPROVAL_REQUIRED',
-            riskScore: 0.45,
-            decisionReasons: ['Transaction exceeds $25.00 human approval threshold'],
-            createdAt: new Date(Date.now() - 15 * 60000).toISOString(),
-          },
-          {
-            id: 'ev-03',
-            requestId: 'req-prod-003',
-            agentId: 'agent-adversarial-test',
-            merchant: 'hacker@blackhat.com',
-            amountFormatted: '$99.00',
-            currency: 'USD',
-            decision: 'BLOCK',
-            status: 'BLOCKED',
-            eventType: 'POLICY_BLOCKED',
-            riskScore: 0.95,
-            decisionReasons: ['Recipient is in blocked denylist', 'Exceeds maximum $50.00 transaction cap'],
-            errorMessage: 'Blocked by deterministic security policy: Recipient is in blocked list',
-            createdAt: new Date(Date.now() - 45 * 60000).toISOString(),
-          },
-        ]);
-      }
+      // In case of error, show honest empty state
+      setEvents([]);
     } finally {
       setIsLoading(false);
     }
@@ -123,12 +86,12 @@ export default function TransactionsPage() {
           <div className="flex items-center gap-2">
             {/* Auto refresh pill */}
             <div className="flex items-center p-1 rounded-full bg-[#1C1E24] border border-white/[0.08] text-xs">
-              <span className="px-2 text-[#8E929C] text-[11px]">Stream:</span>
+              <span className="px-2 text-[#8E929C] text-[11px] hidden sm:inline">Stream:</span>
               {(['5s', '15s', 'off'] as const).map((mode) => (
                 <button
                   key={mode}
                   onClick={() => setAutoRefresh(mode)}
-                  className={`px-2.5 py-1 rounded-full font-semibold transition-all ${
+                  className={`px-3 py-1.5 rounded-full font-semibold transition-all btn-press touch-manipulation min-h-[32px] ${
                     autoRefresh === mode
                       ? 'bg-[#D7FF70] text-[#0E1400]'
                       : 'text-[#8E929C] hover:text-white'
@@ -141,7 +104,7 @@ export default function TransactionsPage() {
 
             <button
               onClick={loadEvents}
-              className="p-2 rounded-full bg-[#1C1E24] border border-white/[0.08] hover:border-white/20 text-[#8E929C] hover:text-white transition-colors"
+              className="w-10 h-10 min-w-[40px] min-h-[40px] rounded-full bg-[#1C1E24] border border-white/[0.08] hover:border-white/20 text-[#8E929C] hover:text-white transition-colors flex items-center justify-center btn-press touch-manipulation"
               aria-label="Refresh events"
             >
               <RefreshCw className="w-4 h-4" />
@@ -159,7 +122,7 @@ export default function TransactionsPage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search by Agent ID, Merchant, or Request ID..."
-              className="w-full bg-[#121316] border border-white/[0.08] focus:border-[#D7FF70]/60 rounded-full pl-9 pr-4 py-2 text-xs text-white placeholder-[#6E7380] focus:outline-none transition-colors"
+              className="w-full bg-[#121316] border border-white/[0.08] focus:border-[#D7FF70]/60 rounded-full pl-9 pr-4 py-2.5 text-xs text-white placeholder-[#6E7380] focus:outline-none transition-colors"
             />
           </form>
 
@@ -171,7 +134,7 @@ export default function TransactionsPage() {
                 <button
                   key={dec}
                   onClick={() => setSelectedDecision(dec)}
-                  className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap btn-press ${
+                  className={`px-4 py-2 rounded-full text-xs font-semibold transition-all whitespace-nowrap btn-press touch-manipulation min-h-[38px] ${
                     isSelected
                       ? 'bg-[#D7FF70] text-[#0E1400] shadow-[0_2px_8px_rgba(215,255,112,0.2)]'
                       : 'bg-[#121316] text-[#8E929C] hover:text-white border border-white/[0.06]'

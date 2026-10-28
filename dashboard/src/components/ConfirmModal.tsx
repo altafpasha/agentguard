@@ -52,7 +52,7 @@ export function ConfirmModal({
         <button
           onClick={onClose}
           aria-label="Close dialog"
-          className="absolute top-5 right-5 w-8 h-8 rounded-full bg-[#121316] text-[#8E929C] hover:text-white flex items-center justify-center transition-colors"
+          className="absolute top-4 right-4 w-10 h-10 min-w-[40px] min-h-[40px] rounded-full bg-[#121316] text-[#8E929C] hover:text-white flex items-center justify-center transition-colors btn-press touch-manipulation"
         >
           <X className="w-4 h-4" />
         </button>
@@ -87,11 +87,11 @@ export function ConfirmModal({
         {children && <div className="my-4">{children}</div>}
 
         {/* Actions Footer */}
-        <div className="flex items-center justify-end gap-2.5 mt-6 pt-4 border-t border-white/[0.06]">
+        <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-end gap-2.5 mt-6 pt-4 border-t border-white/[0.06]">
           <button
             onClick={onClose}
             disabled={isLoading}
-            className="px-4 py-2 rounded-full bg-[#121316] border border-white/[0.08] hover:bg-[#22252C] text-xs font-semibold text-[#8E929C] hover:text-white transition-colors"
+            className="w-full sm:w-auto px-5 py-3 rounded-full bg-[#121316] border border-white/[0.08] hover:bg-[#22252C] text-xs font-semibold text-[#8E929C] hover:text-white transition-colors btn-press touch-manipulation min-h-[44px] flex items-center justify-center"
           >
             {cancelText}
           </button>
@@ -99,16 +99,16 @@ export function ConfirmModal({
           <button
             onClick={onConfirm}
             disabled={isLoading}
-            className={`px-5 py-2 rounded-full text-xs font-bold transition-all shadow-md flex items-center gap-1.5 ${
+            className={`w-full sm:w-auto px-6 py-3 rounded-full text-xs font-bold transition-all shadow-md flex items-center justify-center gap-2 btn-press touch-manipulation min-h-[44px] ${
               type === 'danger'
                 ? 'bg-[#FF6B6B] hover:bg-[#FF5252] text-white shadow-[#FF6B6B]/20'
                 : 'bg-[#D7FF70] hover:bg-[#C4F250] text-[#0E1400] shadow-[#D7FF70]/20'
             } disabled:opacity-50`}
           >
             {isLoading ? (
-              <span className="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+              <span className="inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin shrink-0" />
             ) : (
-              <Check className="w-3.5 h-3.5" />
+              <Check className="w-4 h-4 shrink-0" />
             )}
             <span>{confirmText}</span>
           </button>
