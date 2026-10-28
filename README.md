@@ -313,7 +313,7 @@ AgentGuard provides official, production-ready client SDKs for integrating exter
 | Package | Language / Runtime | Distribution | Status | Documentation |
 |:---|:---|:---|:---|:---|
 | **`@codesec-ai/agentguard`** | Node.js >= 18.0.0 (TS/ESM/CJS) | [npm](https://www.npmjs.com/package/@codesec-ai/agentguard) | Ready (v1.0.0) | [TypeScript SDK Guide](docs/integrations/SDK_GUIDE.md) |
-| **`agentguard`** | Python >= 3.9 (Typed / Zero-dep) | [PyPI](https://pypi.org/project/agentguard/) | Ready (v1.0.0) | [Python SDK Guide](docs/integrations/SDK_GUIDE.md) |
+| **`codesec-agentguard`** | Python >= 3.9 (Typed / Zero-dep) | [PyPI](https://pypi.org/project/codesec-agentguard/) | Ready (v1.0.0) | [Python SDK Guide](docs/integrations/SDK_GUIDE.md) |
 
 ### 1. TypeScript / Node.js Installation
 
@@ -356,7 +356,7 @@ if (decision.status === 'ALLOW') {
 ### 2. Python Installation
 
 ```bash
-python -m pip install agentguard
+python -m pip install codesec-agentguard
 ```
 
 #### Minimal Working Example

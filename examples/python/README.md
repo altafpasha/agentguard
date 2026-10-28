@@ -1,6 +1,6 @@
 # Python AgentGuard SDK Quickstart
 
-Example script demonstrating `agentguard` usage in Python.
+Example script demonstrating `codesec-agentguard` usage in Python.
 
 ## Run
 

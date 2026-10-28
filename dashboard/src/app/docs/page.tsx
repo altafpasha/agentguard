@@ -162,7 +162,7 @@ const DOC_SECTIONS: DocSection[] = [
     subsections: [
       { id: 'sdk-overview', title: 'Why AgentGuard Has an SDK' },
       { id: 'sdk-ts', title: 'TypeScript / Node.js SDK (@codesec-ai/agentguard)' },
-      { id: 'sdk-python', title: 'Python SDK (agentguard)' },
+      { id: 'sdk-python', title: 'Python SDK (codesec-agentguard)' },
       { id: 'sdk-auth-keys', title: 'API Key Authentication & Scopes' },
       { id: 'sdk-fail-closed', title: 'Fail-Closed Guarantee & Decision Handling' },
     ],
@@ -989,7 +989,7 @@ if (!isVerified) {
             </section>
           )}
 
-          {/* Chapter 10: Official SDK Packages (@codesec-ai/agentguard & agentguard) */}
+          {/* Chapter 10: Official SDK Packages (@codesec-ai/agentguard & codesec-agentguard) */}
           {activeSection === 'sdk-integration' && (
             <section className="space-y-8 animate-in fade-in duration-200">
               <div className="space-y-2 border-b border-white/[0.08] pb-6">
@@ -1069,10 +1069,10 @@ if (decision.isAllowed) {
               <div id="sdk-python" className="space-y-3">
                 <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
                   <span className="w-1.5 h-4 rounded-full bg-[#D7FF70]" />
-                  Python SDK (agentguard)
+                  Python SDK (codesec-agentguard)
                 </h2>
                 <div className="p-3 rounded-xl bg-[#0D0E11] border border-white/[0.06] font-mono text-xs flex items-center justify-between">
-                  <span className="text-[#8E929C]">pip install <span className="text-[#D7FF70]">agentguard</span></span>
+                  <span className="text-[#8E929C]">pip install <span className="text-[#D7FF70]">codesec-agentguard</span></span>
                 </div>
                 <pre className="p-4 rounded-2xl bg-[#0D0E11] border border-white/[0.08] font-mono text-xs text-[#8E929C] overflow-x-auto leading-relaxed">
 {`import os

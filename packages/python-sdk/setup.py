@@ -4,7 +4,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="agentguard",
+    name="codesec-agentguard",
     version="1.0.0",
     description="Official Python SDK for the AgentGuard AI Agent Security Gateway",
     long_description=long_description,

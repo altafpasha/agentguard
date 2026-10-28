@@ -637,10 +637,10 @@ if (decision.isAllowed) {
                 <div className="space-y-4">
                   <div className="p-3 rounded-xl bg-[#121316] border border-white/[0.06] font-mono text-xs flex items-center justify-between">
                     <span className="text-[#8E929C]">
-                      pip install <span className="text-[#D7FF70]">agentguard</span>
+                      pip install <span className="text-[#D7FF70]">codesec-agentguard</span>
                     </span>
                     <button
-                      onClick={() => handleCopySecret('pip install agentguard')}
+                      onClick={() => handleCopySecret('pip install codesec-agentguard')}
                       className="text-[11px] text-[#8E929C] hover:text-white px-2 py-0.5 rounded bg-white/[0.06]"
                     >
                       Copy

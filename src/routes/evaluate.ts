@@ -53,7 +53,7 @@ export const evaluateRoutes: FastifyPluginAsync<EvaluateRouteOptions> = async (
 
   /**
    * Official SDK Security Evaluation Endpoint
-   * Consumed by @codesec-ai/agentguard (Node/TypeScript) and agentguard (Python).
+   * Consumed by @codesec-ai/agentguard (Node/TypeScript) and codesec-agentguard (Python).
    *
    * Authoritatively evaluates actions against:
    * 1. Adversarial prompt injection scanning (if promptContext is present)
