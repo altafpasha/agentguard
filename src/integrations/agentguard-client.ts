@@ -120,7 +120,21 @@ export class AgentGuardClient {
         };
       }
 
-      const data = (await response.json()) as any;
+      interface EvalApiResponse {
+        decision?: 'ALLOW' | 'HOLD' | 'BLOCK';
+        decisionId?: string;
+        id?: string;
+        reason?: string;
+        violations?: string[];
+        policyId?: string;
+        policyVersion?: number;
+        authorizationToken?: string;
+        pendingApprovalId?: string;
+        executed?: boolean;
+        evaluatedAt?: string;
+        record?: EvalApiResponse;
+      }
+      const data = (await response.json()) as EvalApiResponse;
       const decisionRecord = data.record || data;
 
       return {
@@ -136,17 +150,18 @@ export class AgentGuardClient {
         latencyMs,
         failClosedTriggered: false,
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
       clearTimeout(timeoutId);
       const latencyMs = Date.now() - startTime;
-      const isTimeout = err.name === 'AbortError';
+      const errorObj = err as Error;
+      const isTimeout = errorObj.name === 'AbortError';
 
       return {
         decision: 'BLOCK',
         decisionId: `failclose_${Date.now()}`,
         reason: isTimeout
           ? `AgentGuard policy evaluation timed out after ${this.timeoutMs}ms. Transaction blocked for safety (fail-closed).`
-          : `AgentGuard gateway communication error: ${err.message || 'Network failure'}. Transaction blocked for safety (fail-closed).`,
+          : `AgentGuard gateway communication error: ${errorObj.message || 'Network failure'}. Transaction blocked for safety (fail-closed).`,
         executed: false,
         timestamp: new Date().toISOString(),
         latencyMs,
@@ -199,22 +214,31 @@ export class AgentGuardClient {
         };
       }
 
-      const data = (await response.json()) as any;
+      interface ScanApiResponse {
+        isSafe?: boolean;
+        decision?: 'ALLOW' | 'BLOCK';
+        riskScore?: number;
+        findings?: AgentGuardScanResult['findings'];
+        violations?: AgentGuardScanResult['findings'];
+        timestamp?: string;
+      }
+      const data = (await response.json()) as ScanApiResponse;
       return {
         decision: data.isSafe === false || data.decision === 'BLOCK' ? 'BLOCK' : 'ALLOW',
         riskScore: data.riskScore ?? (data.isSafe ? 0 : 0.9),
         findings: data.findings || data.violations || [],
         scannedAt: data.timestamp || new Date().toISOString(),
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
       clearTimeout(timeoutId);
+      const errorObj = err as Error;
       return {
         decision: 'BLOCK',
         riskScore: 1.0,
         findings: [
           {
             type: 'COMMUNICATION_ERROR',
-            description: `AgentGuard scan error: ${err.message || 'Timeout/Network failure'} (fail-closed)`,
+            description: `AgentGuard scan error: ${errorObj.message || 'Timeout/Network failure'} (fail-closed)`,
             severity: 'high',
           },
         ],

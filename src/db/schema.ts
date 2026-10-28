@@ -322,7 +322,7 @@ export const storeOrders = pgTable(
   {
     id: uuid('id').defaultRandom().primaryKey(),
     orderNumber: varchar('order_number', { length: 64 }).notNull().unique(),
-    items: jsonb('items').$type<any[]>().notNull(),
+    items: jsonb('items').$type<Array<Record<string, unknown>>>().notNull(),
     totalCents: bigint('total_cents', { mode: 'bigint' }).notNull(),
     totalFormatted: varchar('total_formatted', { length: 32 }).notNull(),
     currency: varchar('currency', { length: 3 }).notNull().default('USD'),

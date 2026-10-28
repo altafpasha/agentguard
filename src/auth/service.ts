@@ -555,13 +555,7 @@ export class MemoryReviewerAuthService implements IReviewerAuthService {
       throw new ForbiddenError('Only an administrator or owner can revoke invitations.');
     }
 
-    let found: any = null;
-    for (const inv of this.invitations.values()) {
-      if (inv.id === inviteId) {
-        found = inv;
-        break;
-      }
-    }
+    const found = Array.from(this.invitations.values()).find((inv) => inv.id === inviteId);
 
     if (!found) {
       throw new NotFoundError('Invitation not found.');
@@ -586,7 +580,7 @@ export class MemoryReviewerAuthService implements IReviewerAuthService {
     }
 
     let targetKey: string | null = null;
-    let targetUser: any = null;
+    let targetUser: ReturnType<typeof this.reviewers.get> = undefined;
     for (const [key, r] of this.reviewers.entries()) {
       if (r.id === targetUserId) {
         targetKey = key;

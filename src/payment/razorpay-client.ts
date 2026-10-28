@@ -123,14 +123,15 @@ export class RazorpayAdapter implements IRazorpayAdapter {
           amount_due: Number(order.amount_due || order.amount),
           currency: order.currency,
           receipt: order.receipt || receipt,
-          status: (order.status as any) || 'created',
+          status: (order.status as RazorpayOrderResult['status']) || 'created',
           attempts: Number(order.attempts || 0),
-          notes: (order.notes as any) || notes,
+          notes: (order.notes as Record<string, string>) || notes,
           created_at: Number(order.created_at || Math.floor(Date.now() / 1000)),
           isSimulated: false,
         };
-      } catch (err: any) {
-        throw new Error(`Razorpay API Error: ${err.message || err.description || 'Order creation failed'}`);
+      } catch (err: unknown) {
+        const errorObj = err as { message?: string; description?: string };
+        throw new Error(`Razorpay API Error: ${errorObj.message || errorObj.description || 'Order creation failed'}`);
       }
     }
 
@@ -174,9 +175,9 @@ export class RazorpayAdapter implements IRazorpayAdapter {
         amount_due: Number(order.amount_due || order.amount),
         currency: order.currency,
         receipt: order.receipt || '',
-        status: (order.status as any) || 'created',
+        status: (order.status as RazorpayOrderResult['status']) || 'created',
         attempts: Number(order.attempts || 0),
-        notes: (order.notes as any) || {},
+        notes: (order.notes as Record<string, string>) || {},
         created_at: Number(order.created_at || Math.floor(Date.now() / 1000)),
         isSimulated: false,
       };
